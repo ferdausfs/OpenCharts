@@ -1,8 +1,10 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createDemoAdapter } from "./adapter/demo.ts";
 import { OpenChartsProvider } from "./adapter/provider.tsx";
 import type { OpenChartsAdapter } from "./adapter/types.ts";
 import { chooseAdapter } from "./adapterChoice.ts";
+import { wsClient } from "./services/ws.ts";
+import { useTradingStore } from "./services/store.tsx";
 import { Terminal } from "./terminal/Terminal.tsx";
 
 /**
@@ -70,14 +72,21 @@ function DebugPanel({ adapter }: { adapter: OpenChartsAdapter }) {
     `choice=${choice}`,
     `adapter=${adapter.name}`,
   ]);
+  const prevStateRef = useRef<string>("");
+
+  const add = (line: string) =>
+    setLog((prev) => {
+      const next = [...prev, line];
+      return next.length > 40 ? next.slice(next.length - 40) : next;
+    });
 
   useEffect(() => {
     let alive = true;
-    const add = (line: string) => {
-      if (alive) setLog((prev) => [...prev, line]);
+    const addAlive = (line: string) => {
+      if (alive) add(line);
     };
 
-    adapter.marketData.onConnectionChange?.((state) => add(`connection=${state}`));
+    adapter.marketData.onConnectionChange?.((state) => addAlive(`connection=${state}`));
 
     void (async () => {
       const t0 = Date.now();
@@ -86,9 +95,9 @@ function DebugPanel({ adapter }: { adapter: OpenChartsAdapter }) {
           "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=5",
         );
         const rows = (await res.json()) as unknown[];
-        add(`page fetch: HTTP ${res.status}, rows=${rows.length}, ${Date.now() - t0}ms`);
+        addAlive(`page fetch: HTTP ${res.status}, rows=${rows.length}, ${Date.now() - t0}ms`);
       } catch (err) {
-        add(`page fetch FAILED after ${Date.now() - t0}ms: ${String(err)}`);
+        addAlive(`page fetch FAILED after ${Date.now() - t0}ms: ${String(err)}`);
       }
 
       const t1 = Date.now();
@@ -98,9 +107,9 @@ function DebugPanel({ adapter }: { adapter: OpenChartsAdapter }) {
           timeframe: "15m",
           limit: 500,
         });
-        add(`adapter.getCandles: ${candles.length} candles in ${Date.now() - t1}ms`);
+        addAlive(`adapter.getCandles: ${candles.length} candles in ${Date.now() - t1}ms`);
       } catch (err) {
-        add(`adapter.getCandles FAILED after ${Date.now() - t1}ms: ${String(err)}`);
+        addAlive(`adapter.getCandles FAILED after ${Date.now() - t1}ms: ${String(err)}`);
       }
     })();
 
@@ -108,6 +117,34 @@ function DebugPanel({ adapter }: { adapter: OpenChartsAdapter }) {
       alive = false;
     };
   }, [adapter]);
+
+  // Log every ReplayStateChanged event that reaches the UI layer.
+  useEffect(() => {
+    const off = wsClient.subscribe("market-data", (event) => {
+      const e = event as { eventType?: string; action?: string };
+      if (e.eventType === "ReplayStateChanged") {
+        add(`[event] ReplayStateChanged action=${e.action ?? "?"}`);
+      }
+    });
+    return off;
+  }, []);
+
+  // Poll the trading store; log replay state only when it changes.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const s = useTradingStore.getState();
+      const cursor =
+        s.replayCursorTimestamp != null ? new Date(s.replayCursorTimestamp).toISOString() : "null";
+      const sig = `${s.isReplaying}|${s.replayPaused}|${s.replaySpeed}|${s.replaySessionDate ?? "null"}|${cursor}`;
+      if (sig !== prevStateRef.current) {
+        prevStateRef.current = sig;
+        add(
+          `[state] isReplaying=${s.isReplaying} paused=${s.replayPaused} speed=${s.replaySpeed} date=${s.replaySessionDate ?? "null"} cursor=${cursor}`,
+        );
+      }
+    }, 500);
+    return () => window.clearInterval(id);
+  }, []);
 
   if (!window.location.search.toLowerCase().includes("debug")) return null;
   return (
