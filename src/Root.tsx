@@ -53,9 +53,85 @@ function BinanceOrDemo() {
 
   if (!adapter) return null;
   return (
-    <OpenChartsProvider adapter={adapter}>
-      <Terminal />
-    </OpenChartsProvider>
+    <>
+      <OpenChartsProvider adapter={adapter}>
+        <Terminal />
+      </OpenChartsProvider>
+      <DebugPanel adapter={adapter} />
+    </>
+  );
+}
+
+// TEMPORARY: on-page diagnostics, shown only when the URL contains ?debug.
+// Tells us exactly where candle loading breaks on mobile browsers.
+// Remove once the issue is found.
+function DebugPanel({ adapter }: { adapter: OpenChartsAdapter }) {
+  const [log, setLog] = useState<string[]>(() => [
+    `choice=${choice}`,
+    `adapter=${adapter.name}`,
+  ]);
+
+  useEffect(() => {
+    let alive = true;
+    const add = (line: string) => {
+      if (alive) setLog((prev) => [...prev, line]);
+    };
+
+    adapter.marketData.onConnectionChange?.((state) => add(`connection=${state}`));
+
+    void (async () => {
+      const t0 = Date.now();
+      try {
+        const res = await fetch(
+          "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=5",
+        );
+        const rows = (await res.json()) as unknown[];
+        add(`page fetch: HTTP ${res.status}, rows=${rows.length}, ${Date.now() - t0}ms`);
+      } catch (err) {
+        add(`page fetch FAILED after ${Date.now() - t0}ms: ${String(err)}`);
+      }
+
+      const t1 = Date.now();
+      try {
+        const candles = await adapter.marketData.getCandles({
+          symbol: "BTCUSD",
+          timeframe: "15m",
+          limit: 500,
+        });
+        add(`adapter.getCandles: ${candles.length} candles in ${Date.now() - t1}ms`);
+      } catch (err) {
+        add(`adapter.getCandles FAILED after ${Date.now() - t1}ms: ${String(err)}`);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [adapter]);
+
+  if (!window.location.search.toLowerCase().includes("debug")) return null;
+  return (
+    <pre
+      style={{
+        position: "fixed",
+        bottom: 8,
+        left: 8,
+        right: 8,
+        zIndex: 9999,
+        background: "rgba(17,24,39,0.95)",
+        color: "#fbbf24",
+        fontSize: 10,
+        lineHeight: 1.4,
+        padding: 8,
+        borderRadius: 8,
+        whiteSpace: "pre-wrap",
+        maxHeight: "45%",
+        overflow: "auto",
+        margin: 0,
+      }}
+    >
+      {log.join("\n")}
+    </pre>
   );
 }
 
