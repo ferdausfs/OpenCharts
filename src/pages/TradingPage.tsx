@@ -107,6 +107,11 @@ export function TradingPage() {
   const resizingRef = useRef(false);
   const resizeStartY = useRef(0);
   const resizeStartH = useRef(0);
+  // rAF-batched (audit #44): each mousemove used to synchronously re-render
+  // the whole page and trigger a chart applyOptions; now at most one render
+  // per frame while dragging.
+  const resizeRafRef = useRef<number | null>(null);
+  const resizePendingY = useRef<number | null>(null);
 
   const handleResizeStart = useCallback(
     (e: React.MouseEvent | React.TouchEvent) => {
@@ -116,15 +121,26 @@ export function TradingPage() {
       resizeStartY.current = clientY;
       resizeStartH.current = bottomPanelHeight;
 
+      const applyResize = () => {
+        resizeRafRef.current = null;
+        const y = resizePendingY.current;
+        if (y == null || !resizingRef.current) return;
+        const delta = resizeStartY.current - y;
+        setBottomPanelHeight(Math.max(100, Math.min(600, resizeStartH.current + delta)));
+      };
       const onMove = (ev: MouseEvent | TouchEvent) => {
         if (!resizingRef.current) return;
-        const y = "touches" in ev ? ev.touches[0]!.clientY : (ev as MouseEvent).clientY;
-        const delta = resizeStartY.current - y;
-        const newH = Math.max(100, Math.min(600, resizeStartH.current + delta));
-        setBottomPanelHeight(newH);
+        resizePendingY.current =
+          "touches" in ev ? ev.touches[0]!.clientY : (ev as MouseEvent).clientY;
+        if (resizeRafRef.current !== null) return;
+        resizeRafRef.current = requestAnimationFrame(applyResize);
       };
       const onUp = () => {
         resizingRef.current = false;
+        if (resizeRafRef.current !== null) {
+          cancelAnimationFrame(resizeRafRef.current);
+          resizeRafRef.current = null;
+        }
         setBottomPanelHeight((h) => {
           safeStorage.setItem("bottomPanelHeight", String(h));
           return h;

@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTradingStore } from "../../services/store.tsx";
 import { useReplaySession } from "../../services/queries.ts";
 import { api } from "../../services/api.ts";
@@ -11,12 +11,29 @@ function formatTime(epochMs: number): string {
   });
 }
 
+/** Debounce for the server seek while the user drags (ms). */
+const SEEK_DEBOUNCE_MS = 400;
+/** How long the optimistic thumb override survives after the last move (ms). */
+const DRAG_HOLD_MS = 700;
+
 export function ReplayScrubber({ accountId }: { accountId: string }) {
-  const { replayCursorTimestamp, replaySessionDate } = useTradingStore();
+  // Narrow selectors — subscribing to the whole store re-rendered this strip
+  // on every tick flush (audit #19).
+  const replayCursorTimestamp = useTradingStore((s) => s.replayCursorTimestamp);
+  const replaySessionDate = useTradingStore((s) => s.replaySessionDate);
   const selectedSymbol = useTradingStore((s) => s.selectedSymbol);
   const { data } = useReplaySession(accountId, replaySessionDate, selectedSymbol);
 
   const barRef = useRef<HTMLDivElement>(null);
+
+  // Optimistic thumb (audit #9): while dragging, follow the pointer instantly.
+  // The server previously received a PATCH per pointermove, and each response
+  // bumped replayVersion → full candle refetch + setData — scrubbing felt
+  // laggy and jumpy.
+  const [dragMs, setDragMs] = useState<number | null>(null);
+  const dragHoldTimer = useRef<number | null>(null);
+  const seekTimer = useRef<number | null>(null);
+  const lastSentTs = useRef<string | null>(null);
 
   const tickBuffer = data?.tickBuffer ?? [];
   const tradeEvents = data?.tradeEvents ?? [];
@@ -26,18 +43,39 @@ export function ReplayScrubber({ accountId }: { accountId: string }) {
   const endMs = tickBuffer[tickBuffer.length - 1]?.t ?? null;
   const rangeMs = startMs != null && endMs != null ? endMs - startMs : 0;
 
+  const shownTs = dragMs ?? replayCursorTimestamp;
   const thumbPct =
-    replayCursorTimestamp != null && startMs != null && rangeMs > 0
-      ? Math.max(0, Math.min(100, ((replayCursorTimestamp - startMs) / rangeMs) * 100))
+    shownTs != null && startMs != null && rangeMs > 0
+      ? Math.max(0, Math.min(100, ((shownTs - startMs) / rangeMs) * 100))
       : null;
+
+  // Clear pending timers on unmount.
+  useEffect(() => {
+    return () => {
+      if (dragHoldTimer.current !== null) window.clearTimeout(dragHoldTimer.current);
+      if (seekTimer.current !== null) window.clearTimeout(seekTimer.current);
+    };
+  }, []);
 
   const seekToX = useCallback(
     (clientX: number) => {
       if (!barRef.current || !sessionDate || startMs == null || rangeMs <= 0) return;
       const rect = barRef.current.getBoundingClientRect();
       const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const ts = new Date(startMs + pct * rangeMs).toISOString();
-      api.replaySeek(accountId, sessionDate, ts).catch(() => null);
+      const tsMs = startMs + pct * rangeMs;
+
+      setDragMs(tsMs);
+      if (dragHoldTimer.current !== null) window.clearTimeout(dragHoldTimer.current);
+      dragHoldTimer.current = window.setTimeout(() => setDragMs(null), DRAG_HOLD_MS);
+
+      // One seek per pause, not per pixel.
+      if (seekTimer.current !== null) window.clearTimeout(seekTimer.current);
+      seekTimer.current = window.setTimeout(() => {
+        const ts = new Date(tsMs).toISOString();
+        if (ts === lastSentTs.current) return;
+        lastSentTs.current = ts;
+        api.replaySeek(accountId, sessionDate, ts).catch(() => null);
+      }, SEEK_DEBOUNCE_MS);
     },
     [accountId, sessionDate, startMs, rangeMs],
   );

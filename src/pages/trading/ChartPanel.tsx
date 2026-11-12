@@ -1444,7 +1444,7 @@ export function ChartPanel({
     [onAddDrawing, pipDigits, timeframe, selectedSymbol],
   );
 
-  useIndicators(chartRef, candleSeriesRef, chartData, activeIndicators, isDark);
+  useIndicators(chartRef, candleSeriesRef, chartData, activeIndicators, isDark, chartEpoch);
 
   // ── Replay trade event markers ─────────────────────────────
   useEffect(() => {
@@ -1723,20 +1723,42 @@ export function ChartPanel({
       };
       lastGapRefetchAtRef.current = 0;
     };
-  }, [
-    isDark,
-    pipDigits,
-    colors.background,
-    colors.text,
-    colors.grid,
-    colors.crosshair,
-    colors.watermark,
-    colors.up,
-    colors.down,
-    selectedSymbol,
-  ]); // Re-create on theme / precision / symbol change — NOT timeframe (the
-  // chart persists across TF switches so drawings never blink out; the
-  // TF-change effect below updates the live state in place, TradingView-style).
+    // Created once per mount; every dynamic aspect (theme colors, watermark,
+    // candle colors, precision, symbol) is applied in place by the effects
+    // below (audit #4/#5: recreating the chart on symbol/color change blanked
+    // the viewport, lost the visible range and made drawings blink).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Theme / user color changes apply in place — no chart recreation ──
+  // (The create effect above is mount-only; this keeps the canvas, grid,
+  // crosshair and scale borders in sync with the palette, including the
+  // light/dark toggle.)
+  useEffect(() => {
+    chartRef.current?.applyOptions({
+      layout: {
+        background: { type: ColorType.Solid, color: colors.background },
+        textColor: colors.text,
+      },
+      grid: {
+        vertLines: { color: colors.grid },
+        horzLines: { color: colors.grid },
+      },
+      crosshair: {
+        vertLine: { color: colors.crosshair },
+        horzLine: { color: colors.crosshair },
+      },
+      rightPriceScale: { borderColor: colors.grid },
+      timeScale: { borderColor: colors.grid },
+    });
+  }, [colors.background, colors.text, colors.grid, colors.crosshair, chartEpoch]);
+
+  // ── Precision changes apply in place ──
+  useEffect(() => {
+    candleSeriesRef.current?.applyOptions({
+      priceFormat: { type: "price", precision: pipDigits, minMove: getMinMove(pipDigits) },
+    });
+  }, [pipDigits, chartEpoch]);
 
   // Update watermark text when symbol changes (visibility comes from settings)
   useEffect(() => {
@@ -1811,6 +1833,12 @@ export function ChartPanel({
   // ── Refs for smooth real-time streaming ────────────────
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
   const lastLoadKeyRef = useRef<string>("");
+  // Bookkeeping for range anchoring across setData passes (audit #6/#7): the
+  // previous array's length and first-bar time, so a prepend (the 400ms
+  // deepening fetch, scroll-left history loads) can shift the viewport instead
+  // of making the chart visibly jump.
+  const lastDataLenRef = useRef(0);
+  const lastFirstTimeRef = useRef<Time | null>(null);
   // Authoritative server candle timestamp, normalised to unix MILLISECONDS —
   // used to ignore ticks that pre-date the latest server CandleUpdate (those can
   // pollute H/L after a WS flush delivers a buffered tick *after* its
@@ -1853,23 +1881,72 @@ export function ChartPanel({
     if (!series || chartData.length === 0) return;
     const ctx = makeRtCtx(series);
     const loadKey = `${selectedSymbol}:${timeframe}`;
-    const isNewChart = lastLoadKeyRef.current !== loadKey;
+    const isNewView = lastLoadKeyRef.current !== loadKey;
+
+    // Bookkeeping from the previous pass. These refs describe the
+    // lightweight-charts instance — the external system this effect
+    // synchronises — not render state, and restructuring the real-time sync
+    // around the React Compiler rule would buy nothing but risk.
+    const prevLen = lastDataLenRef.current;
+    const prevFirstTime = lastFirstTimeRef.current;
+    const isSameView = !isNewView && prevLen > 0;
+
+    // ── Replay fast path (audit #10) ──────────────────────────
+    // During playback the cursor advances ~4×/s and only the last bar evolves
+    // (or one bar appends). A full setData repaint at that rate is what made
+    // replay feel heavy — update in place instead. Any structural change
+    // (seek jump, rewind, bar removal) falls through to the full setData.
+    if (isSameView && isReplaying && (chartData.length === prevLen || chartData.length === prevLen + 1)) {
+      const lastBar = chartData[chartData.length - 1]!;
+      const lastVol = volumeData[volumeData.length - 1];
+      series.update(lastBar);
+      if (lastVol) volumeSeriesRef.current?.update(lastVol);
+      // eslint-disable-next-line react-hooks/immutability
+      lastCandleRef.current = lastBar;
+      lastDataLenRef.current = chartData.length;
+      lastFirstTimeRef.current = chartData[0]!.time;
+      setLegendThrottled(candleToLegend(lastBar, lastVol?.value || 0));
+      return;
+    }
+
+    // ── Full sync ─────────────────────────────────────────────
+    // Capture the viewport first: when the new array prepends history (the
+    // 400ms deepening fetch, scroll-left loads), shift the range by the number
+    // of inserted bars so what the user was looking at stays put (audit #6/#7).
+    const prevRange = isSameView
+      ? chartRef.current?.timeScale().getVisibleLogicalRange()
+      : null;
 
     series.setData(chartData);
     volumeSeriesRef.current?.setData(volumeData);
-    // These two refs are bookkeeping for the lightweight-charts instance — the
-    // external system this effect synchronises — not render state. The React
-    // Compiler rule cannot tell the difference, and restructuring the real-time
-    // sync around it would buy nothing but risk.
-    // eslint-disable-next-line react-hooks/immutability
     lastCandleRef.current = chartData[chartData.length - 1] ?? null;
     setLegend(legendFromSeries(chartData, volumeData));
+    lastDataLenRef.current = chartData.length;
+    lastFirstTimeRef.current = chartData[0]!.time;
+
+    if (isSameView && prevRange && prevFirstTime != null) {
+      let prepended = 0;
+      while (
+        prepended < chartData.length &&
+        (chartData[prepended]!.time as number) < (prevFirstTime as number)
+      ) {
+        prepended++;
+      }
+      if (prepended > 0) {
+        chartRef.current
+          ?.timeScale()
+          .setVisibleLogicalRange({
+            from: prevRange.from + prepended,
+            to: prevRange.to + prepended,
+          });
+      }
+    }
 
     // Read the freshest server candle straight from the store (not a prop) so
     // a refetch lands without waiting for the next WS flush.
     const fresh = useTradingStore.getState();
     const buffered = fresh.isReplaying ? undefined : fresh.liveCandleUpdates[loadKey];
-    if (!isNewChart) {
+    if (!isNewView) {
       // Periodic refetch — preserve viewport, re-apply latest live data.
       reapplyLive(buffered, ctx);
       return;
@@ -1881,7 +1958,7 @@ export function ChartPanel({
     liveCandleTsRef.current = 0;
     replayBufferedLive(buffered, chartData, ctx);
     return scheduleStaleRefetch(chartData, ctx);
-  }, [chartData, volumeData, selectedSymbol, timeframe, makeRtCtx]);
+  }, [chartData, volumeData, selectedSymbol, timeframe, makeRtCtx, isReplaying, setLegendThrottled]);
 
   // ── Real-time candle updates ──────────────────────────
 
@@ -2000,8 +2077,8 @@ export function ChartPanel({
   }, [selectedSymbol, timeframe, queryClient, isReplaying]);
 
   // ── Chart plugin overlays ──────────────────────────────────
-  // Re-runs when active plugins change or the chart is recreated (isDark /
-  // symbol / timeframe), so primitives are always attached to the live series.
+  // Re-runs when active plugins change or the chart is (re)created, so
+  // primitives are always attached to the live series.
   const symbolCategory = symbolInfo?.category;
   useEffect(() => {
     if (!candleSeriesRef.current) return;
@@ -2056,7 +2133,9 @@ export function ChartPanel({
     positions,
     orders,
     selectedSymbol,
-    chartData,
+    // chartEpoch, not chartData (audit #31): price lines are series-level and
+    // survive setData, so a refetch/replay tick must not rebuild them.
+    chartEpoch,
     symbolInfo,
     colors,
     chartPrefs.overlayPositionsOnChart,

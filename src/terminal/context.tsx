@@ -94,7 +94,7 @@ function deepLimitFor(timeframe: Timeframe): number {
     case "5m":
       return 5_000;
     case "15m":
-      return 12_000;
+      return 6_000;
     case "30m":
       return 8_000;
     case "1h":
@@ -396,13 +396,24 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     () => (typeof window !== "undefined" && window.innerWidth < 768 ? 500 : 400),
     [],
   );
-  const [deepenedFor, setDeepenedFor] = useState<string | null>(null);
-  const candleLimit =
-    deepenedFor === chartKey ? deepLimitFor(timeframe) : firstPaintCandleLimit;
+  // Remember deepened symbol:tf pairs for the session (audit #7): revisiting a
+  // timeframe must not replay the shallow-first-paint → 400ms → deep-fetch
+  // sequence, which re-jumped the chart every time you switched back.
+  const [deepenedKeys, setDeepenedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const isDeepened = deepenedKeys.has(chartKey);
+  const candleLimit = isDeepened ? deepLimitFor(timeframe) : firstPaintCandleLimit;
   useEffect(() => {
-    const timer = window.setTimeout(() => setDeepenedFor(chartKey), 400);
+    if (isDeepened) return;
+    const timer = window.setTimeout(() => {
+      setDeepenedKeys((prev) => {
+        if (prev.has(chartKey)) return prev;
+        const next = new Set(prev);
+        next.add(chartKey);
+        return next;
+      });
+    }, 400);
     return () => window.clearTimeout(timer);
-  }, [chartKey]);
+  }, [chartKey, isDeepened]);
 
   const { data: candles = [] } = useCandles(selectedSymbol, timeframe, candleLimit, replayVersion);
   const { replayCandles, replayTradeEvents } = useReplayChartData(activeAccountId, timeframe);
