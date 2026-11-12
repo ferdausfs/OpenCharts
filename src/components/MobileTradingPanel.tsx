@@ -4,9 +4,10 @@
  * Provides large tap targets, swipeable panels, and quick preset
  * lot sizes for one-tap order placement.
  */
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useContext } from "react";
 import { cn } from "@/lib/utils";
 import { useInstrumentLabels } from "../hooks/useInstrumentLabels.ts";
+import { TickContext } from "../terminal/use-terminal.ts";
 
 interface MobilePosition {
   id: string;
@@ -52,8 +53,8 @@ const TABS: Tab[] = ["order", "positions", "alerts"];
 
 export function MobileTradingPanel({
   symbol,
-  bid = 0,
-  ask = 0,
+  bid: bidProp,
+  ask: askProp,
   spread: spreadProp,
   accountBalance = 0,
   onPlaceOrder,
@@ -63,6 +64,10 @@ export function MobileTradingPanel({
   closingPositionId = null,
   closingAll = false,
 }: MobileTradingPanelProps) {
+  // Live quotes come from the shared feed unless the host passes them.
+  const feed = useContext(TickContext);
+  const bid = bidProp ?? feed?.tick?.bid ?? 0;
+  const ask = askProp ?? feed?.tick?.ask ?? 0;
   const { formatQty } = useInstrumentLabels();
   const spread = spreadProp ?? ask - bid;
   const [activeTab, setActiveTab] = useState<Tab>("order");

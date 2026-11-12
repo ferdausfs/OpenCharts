@@ -5,7 +5,9 @@
 @layer base {
   /* Deep dark trading theme — inspired by E8 Markets aesthetic */
   :root {
-    --background: 220 20% 4.5%;
+    /* #0b0e14 — the same hex as the chart canvas (CHART_COLORS.dark.background)
+       and app.css body, so panels and chart read as one seamless surface. */
+    --background: 220 29% 6%;
     --foreground: 210 20% 88%;
     --card: 220 18% 7%;
     --card-foreground: 210 20% 88%;

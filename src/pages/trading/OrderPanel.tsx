@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useContext, useState } from "react";
 import {
   Minus,
   Plus,
@@ -19,6 +19,7 @@ import { toast } from "../../services/toast.ts";
 import { formatCurrency, formatNumber, cn } from "../../lib/utils.ts";
 
 import type { ConfirmOrderState } from "../../terminal/use-terminal.ts";
+import { TickContext } from "../../terminal/use-terminal.ts";
 import { isHyperliquidMode } from "../../hyperliquid/ui/mode.ts";
 
 type ConfirmableOrder = NonNullable<ConfirmOrderState>;
@@ -55,14 +56,18 @@ export interface OrderPanelProps {
 
 /** The order ticket: the Hyperliquid variant when that adapter is installed, else the generic one. */
 export function OrderPanel(props: OrderPanelProps) {
+  // Live quotes come from the shared quote feed when the host doesn't pass a
+  // tick — the provider's TickBridge supplies them without prop plumbing.
+  const feed = useContext(TickContext);
+  const tick = props.tick ?? feed?.tick;
   if (isHyperliquidMode()) {
     return (
       <Suspense fallback={null}>
-        <HlOrderPanel {...props} />
+        <HlOrderPanel {...props} tick={tick} />
       </Suspense>
     );
   }
-  return <GenericOrderPanel {...props} />;
+  return <GenericOrderPanel {...props} tick={tick} />;
 }
 
 function GenericOrderPanel({

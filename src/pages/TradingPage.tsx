@@ -1,12 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { MobileAccountBar, MobileTradingPanel } from "../components/MobileTradingPanel.tsx";
 import { NewsFeed as MarketNewsFeed } from "../components/TradingPowerFeatures.tsx";
+import { ConnectionIndicator } from "../components/ConnectionIndicator.tsx";
 import { TradingViewTechnicalAnalysis } from "../components/TradingViewWidgets.tsx";
 import type { IndicatorType } from "../lib/indicators.ts";
 import { safeStorage } from "../lib/safe-storage.ts";
 import type { PlaceOrderInput } from "../services/schemas.ts";
 import { updateChartPreferences } from "../hooks/useChartPreferences.ts";
-import { useTradingStore } from "../services/store.tsx";
 import { useTerminal } from "../terminal/use-terminal.ts";
 import { BottomPanel } from "./trading/BottomPanel.tsx";
 import { ChartPanel } from "./trading/ChartPanel.tsx";
@@ -38,12 +38,10 @@ export function TradingPage() {
     symbols,
     symbolInfo,
     pipDigits,
-    tick,
     isDark,
     timeframe,
     setTimeframe: handleTimeframeChange,
     candles,
-    liveCandle,
     replayCandles,
     replayTradeEvents,
     isReplaying,
@@ -153,7 +151,6 @@ export function TradingPage() {
     },
     [activeIndicators, toggleIndicator],
   );
-  const ticks = useTradingStore((s) => s.ticks);
 
   return (
 
@@ -169,39 +166,44 @@ export function TradingPage() {
       </div>
 
       {/* ── Top Toolbar ──────────────────────────────────── */}
-      <ChartToolbar
-        selectedSymbol={selectedSymbol}
-        symbols={symbols}
-        onSymbolChange={setSelectedSymbol}
-        timeframe={timeframe}
-        onTimeframeChange={handleTimeframeChange}
-        activeIndicators={activeIndicators}
-        onToggleIndicator={toggleIndicator}
-        showIndicatorMenu={showIndicatorMenu}
-        onToggleIndicatorMenu={() => setShowIndicatorMenu((v) => !v)}
-        drawingTool={drawingTool}
-        onDrawingTool={setDrawingTool}
-        drawings={drawings}
-        onClearDrawings={clearDrawings}
-        rightPanel={rightPanel}
-        onRightPanel={setRightPanel}
-        showRightPanel={showRightPanel}
-        onToggleRightPanel={() => setShowRightPanel((v) => !v)}
-        tick={tick}
-        symbolInfo={symbolInfo}
-        isReplaying={isReplaying}
-        replayAccountId={activeAccountId}
-        activePlugins={activePlugins}
-        onTogglePlugin={handleTogglePlugin}
-        onSetIndicators={setIndicators}
-        onSetPlugins={handleSetPlugins}
-        magnetMode={chartPrefs.magnetMode}
-        onCycleMagnet={cycleMagnetMode}
-        stayInDrawingMode={chartPrefs.stayInDrawingMode}
-        onToggleStayInDrawingMode={() =>
-          updateChartPreferences({ stayInDrawingMode: !chartPrefs.stayInDrawingMode })
-        }
-      />
+      <div className="relative shrink-0">
+        <ChartToolbar
+          selectedSymbol={selectedSymbol}
+          symbols={symbols}
+          onSymbolChange={setSelectedSymbol}
+          timeframe={timeframe}
+          onTimeframeChange={handleTimeframeChange}
+          activeIndicators={activeIndicators}
+          onToggleIndicator={toggleIndicator}
+          showIndicatorMenu={showIndicatorMenu}
+          onToggleIndicatorMenu={() => setShowIndicatorMenu((v) => !v)}
+          drawingTool={drawingTool}
+          onDrawingTool={setDrawingTool}
+          drawings={drawings}
+          onClearDrawings={clearDrawings}
+          rightPanel={rightPanel}
+          onRightPanel={setRightPanel}
+          showRightPanel={showRightPanel}
+          onToggleRightPanel={() => setShowRightPanel((v) => !v)}
+          symbolInfo={symbolInfo}
+          isReplaying={isReplaying}
+          replayAccountId={activeAccountId}
+          activePlugins={activePlugins}
+          onTogglePlugin={handleTogglePlugin}
+          onSetIndicators={setIndicators}
+          onSetPlugins={handleSetPlugins}
+          magnetMode={chartPrefs.magnetMode}
+          onCycleMagnet={cycleMagnetMode}
+          stayInDrawingMode={chartPrefs.stayInDrawingMode}
+          onToggleStayInDrawingMode={() =>
+            updateChartPreferences({ stayInDrawingMode: !chartPrefs.stayInDrawingMode })
+          }
+        />
+        {/* Live-feed status: dot + label at the toolbar's right edge. */}
+        <div className="absolute right-2 top-1.5 z-20 flex items-center rounded bg-card/90 px-1.5 py-0.5 border border-border/60 pointer-events-none">
+          <ConnectionIndicator />
+        </div>
+      </div>
 
       <MarketClosedBanner symbolInfo={symbolInfo} />
 
@@ -230,8 +232,6 @@ export function TradingPage() {
               stayInDrawingMode={chartPrefs.stayInDrawingMode}
               positions={chartPositions}
               orders={chartOrders}
-              tick={replayCandles ? undefined : tick}
-              liveCandle={replayCandles ? undefined : liveCandle}
               pipDigits={pipDigits}
               symbolInfo={symbolInfo}
               onModifyPosition={handleChartModifyPosition}
@@ -289,7 +289,6 @@ export function TradingPage() {
               <OrderPanel
                 symbol={selectedSymbol}
                 symbolInfo={symbolInfo}
-                tick={tick}
                 accountId={activeAccountId}
                 oneClick={oneClick}
                 onToggleOneClick={toggleOneClick}
@@ -301,11 +300,10 @@ export function TradingPage() {
                 onOrderSuccess={onOrderSuccess}
               />
             )}
-            {rightPanel === "dom" && <DOMPanel symbol={selectedSymbol} tick={tick} />}
+            {rightPanel === "dom" && <DOMPanel symbol={selectedSymbol} />}
             {rightPanel === "watchlist" && (
               <WatchlistPanel
                 symbols={symbols}
-                ticks={ticks}
                 selectedSymbol={selectedSymbol}
                 onSelect={setSelectedSymbol}
                 oneClick={oneClick}
@@ -353,8 +351,6 @@ export function TradingPage() {
             </div>
             <MobileTradingPanel
               symbol={selectedSymbol}
-              bid={tick?.bid}
-              ask={tick?.ask}
               positions={positions || []}
               onPlaceOrder={(order) => {
                 if (oneClick) {

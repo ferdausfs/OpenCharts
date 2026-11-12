@@ -1,10 +1,20 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { useIsFeedConnected } from "../components/ConnectionIndicator.tsx";
 import {
   TerminalContext,
+  TickContext,
   type ConfirmOrderState,
   type TerminalContextValue,
+  type TickContextValue,
+  useTickFeed,
 } from "./use-terminal.ts";
 import {
   OrderConfirmDialog,
@@ -18,6 +28,7 @@ import {
   useChartPreferences,
 } from "../hooks/useChartPreferences.ts";
 import { useTradeSound } from "../hooks/useTradeSound.ts";
+import { isDarkTheme, subscribeTheme } from "../lib/theme.ts";
 import { safeStorage } from "../lib/safe-storage.ts";
 import type { IndicatorType } from "../lib/indicators.ts";
 import type { CreateJournalEntryInput, UpdateJournalEntryInput } from "../services/api/journal.ts";
@@ -99,18 +110,110 @@ function deepLimitFor(timeframe: Timeframe): number {
   }
 }
 
+/**
+ * Publishes quotes + the live candle through a separate context so per-tick
+ * updates re-render only the quote panels (DOM, order ticket, watchlist) —
+ * never the provider tree above the chart.
+ */
+function TickBridge({
+  chartKey,
+  selectedSymbol,
+  children,
+}: {
+  chartKey: string;
+  selectedSymbol: string;
+  children: ReactNode;
+}) {
+  const ticks = useTradingStore((s) => s.ticks);
+  const liveCandleUpdates = useTradingStore((s) => s.liveCandleUpdates);
+  const value = useMemo<TickContextValue>(
+    () => ({
+      ticks,
+      tick: ticks[selectedSymbol],
+      liveCandle: liveCandleUpdates[chartKey],
+    }),
+    [ticks, liveCandleUpdates, selectedSymbol, chartKey],
+  );
+  return <TickContext.Provider value={value}>{children}</TickContext.Provider>;
+}
+
+/**
+ * Modify / confirm dialogs. They show the live quote while the user edits
+ * SL/TP, so they read the quote feed through TickContext — rendered inside
+ * <TickBridge> above, which keeps the per-tick re-render confined to this
+ * small subtree instead of the whole provider.
+ */
+function DialogsLayer({
+  modifyingPosition,
+  modifyingOrder,
+  confirmOrder,
+  confirmLoading,
+  isFeedConnected,
+  symbolInfo,
+  onClosePosition,
+  onCloseOrder,
+  onCancelConfirm,
+  onConfirmSubmit,
+}: {
+  modifyingPosition: Position | null;
+  modifyingOrder: Order | null;
+  confirmOrder: ConfirmOrderState;
+  confirmLoading: boolean;
+  isFeedConnected: boolean;
+  symbolInfo: Symbol | undefined;
+  onClosePosition: () => void;
+  onCloseOrder: () => void;
+  onCancelConfirm: () => void;
+  onConfirmSubmit: () => void;
+}) {
+  const { tick } = useTickFeed();
+  return (
+    <>
+      <PositionModifyDialog
+        key={modifyingPosition?.id ?? "no-position"}
+        position={modifyingPosition}
+        onClose={onClosePosition}
+        onSaved={onClosePosition}
+        tick={tick}
+        isFeedConnected={isFeedConnected}
+      />
+      <OrderModifyDialog
+        key={modifyingOrder?.id ?? "no-order"}
+        order={modifyingOrder}
+        onClose={onCloseOrder}
+        onSaved={onCloseOrder}
+        tick={tick}
+      />
+      <OrderConfirmDialog
+        isOpen={!!confirmOrder}
+        order={confirmOrder}
+        onConfirm={onConfirmSubmit}
+        onCancel={onCancelConfirm}
+        loading={confirmLoading}
+        tick={tick}
+        symbolInfo={symbolInfo}
+      />
+    </>
+  );
+}
+
+// Stable empties so overlay-off doesn't churn the position-overlay effect
+// (audit: fresh [] per render rebuilt price lines every render).
+const NO_POSITIONS: Position[] = [];
+const NO_ORDERS: Order[] = [];
+
 export function TerminalProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
-  const {
-    selectedSymbol,
-    setSelectedSymbol,
-    ticks,
-    updateTick,
-    activeAccountId,
-    replayVersion,
-    isReplaying,
-  } = useTradingStore();
+  // Narrow selectors — the provider must NOT re-render per WS tick flush, or
+  // every panel below it re-renders at tick rate. Quotes flow through
+  // <TickBridge> / TickContext instead; ChartPanel paints ticks imperatively.
+  const selectedSymbol = useTradingStore((s) => s.selectedSymbol);
+  const setSelectedSymbol = useTradingStore((s) => s.setSelectedSymbol);
+  const activeAccountId = useTradingStore((s) => s.activeAccountId);
+  const replayVersion = useTradingStore((s) => s.replayVersion);
+  const isReplaying = useTradingStore((s) => s.isReplaying);
+  const updateTick = useTradingStore((s) => s.updateTick);
 
   // ── Timeframe, held per symbol so switching reads the stored one in render
   const [timeframeBySymbol, setTimeframeBySymbol] = useState<Partial<Record<string, Timeframe>>>(
@@ -311,8 +414,8 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     () => positions.reduce((sum, position) => sum + (position.unrealizedPnl || 0), 0),
     [positions],
   );
-  const chartPositions = chartPrefs.overlayPositionsOnChart ? positions : [];
-  const chartOrders = chartPrefs.overlayPositionsOnChart ? orders : [];
+  const chartPositions = chartPrefs.overlayPositionsOnChart ? positions : NO_POSITIONS;
+  const chartOrders = chartPrefs.overlayPositionsOnChart ? orders : NO_ORDERS;
 
   const { data: journalData, isLoading: journalLoading } = useJournalEntries(activeAccountId);
   const createJournalMutation = useCreateJournalEntry();
@@ -411,131 +514,179 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   );
 
   const account = useTradingStore((s) => s.accounts.find((a) => a.id === activeAccountId));
-  const liveCandleUpdates = useTradingStore((s) => s.liveCandleUpdates);
-  const liveCandle = liveCandleUpdates[chartKey];
-  const tick = ticks[selectedSymbol];
   const symbolInfo = symbols.find((s) => s.name === selectedSymbol) as Symbol | undefined;
   const pipDigits = useMemo(
     () => getPipDigits(symbolInfo, selectedSymbol),
     [symbolInfo, selectedSymbol],
   );
-  const isDark =
-    typeof document === "undefined"
-      ? true
-      : !document.documentElement.classList.contains("light");
+  // Reactive theme: re-renders on toggle instead of reading documentElement
+  // once per render (that made isDark effectively frozen between switches).
+  const isDark = useSyncExternalStore(subscribeTheme, isDarkTheme, () => true);
 
-  const value: TerminalContextValue = {
-    selectedSymbol,
-    setSelectedSymbol,
-    symbols,
-    symbolInfo,
-    pipDigits,
-    tick,
-    ticks,
-    isDark,
+  // Memoised so the identity only changes when something in it actually
+  // changes — without this, every render of the provider re-rendered the
+  // whole terminal tree (TradingPage, toolbar, panels, dialogs) even when
+  // nothing the context carries had changed.
+  const value: TerminalContextValue = useMemo(
+    () => ({
+      selectedSymbol,
+      setSelectedSymbol,
+      symbols,
+      symbolInfo,
+      pipDigits,
+      isDark,
 
-    timeframe,
-    setTimeframe,
+      timeframe,
+      setTimeframe,
 
-    candles,
-    liveCandle,
-    replayCandles,
-    replayTradeEvents,
-    isReplaying,
+      candles,
+      replayCandles,
+      replayTradeEvents,
+      isReplaying,
 
-    chartPrefs,
-    activeIndicators,
-    toggleIndicator,
-    clearIndicators,
-    activePlugins,
-    togglePlugin,
-    setPlugins,
-    cycleMagnetMode,
+      chartPrefs,
+      activeIndicators,
+      toggleIndicator,
+      clearIndicators,
+      activePlugins,
+      togglePlugin,
+      setPlugins,
+      cycleMagnetMode,
 
-    drawingTool,
-    setDrawingTool,
-    drawings,
-    addDrawing,
-    updateDrawing,
-    removeDrawing,
-    clearDrawings,
-    undoDrawing,
-    redoDrawing,
+      drawingTool,
+      setDrawingTool,
+      drawings,
+      addDrawing,
+      updateDrawing,
+      removeDrawing,
+      clearDrawings,
+      undoDrawing,
+      redoDrawing,
 
-    activeAccountId,
-    account,
-    positions,
-    orders,
-    positionPnl,
-    chartPositions,
-    chartOrders,
-    isFeedConnected,
+      activeAccountId,
+      account,
+      positions,
+      orders,
+      positionPnl,
+      chartPositions,
+      chartOrders,
+      isFeedConnected,
 
-    oneClick,
-    toggleOneClick,
-    soundMuted,
-    toggleSoundMute,
-    onOrderSuccess,
-    requestOrderConfirmation: setConfirmOrder,
-    submitOrderDirect,
-    quickOrder,
-    modifyPositionLevels,
-    editPosition: setModifyingPosition,
-    editOrder: setModifyingOrder,
-    closePosition,
-    closeAllPositions,
-    cancelOrder,
+      oneClick,
+      toggleOneClick,
+      soundMuted,
+      toggleSoundMute,
+      onOrderSuccess,
+      requestOrderConfirmation: setConfirmOrder,
+      submitOrderDirect,
+      quickOrder,
+      modifyPositionLevels,
+      editPosition: setModifyingPosition,
+      editOrder: setModifyingOrder,
+      closePosition,
+      closeAllPositions,
+      cancelOrder,
 
-    journalEntries: (journalData?.entries ?? []) as TerminalContextValue["journalEntries"],
-    journalLoading,
-    createJournal,
-    updateJournal,
-    deleteJournal,
-  };
+      journalEntries: (journalData?.entries ?? []) as TerminalContextValue["journalEntries"],
+      journalLoading,
+      createJournal,
+      updateJournal,
+      deleteJournal,
+    }),
+    [
+      selectedSymbol,
+      setSelectedSymbol,
+      symbols,
+      symbolInfo,
+      pipDigits,
+      isDark,
+      timeframe,
+      setTimeframe,
+      candles,
+      replayCandles,
+      replayTradeEvents,
+      isReplaying,
+      chartPrefs,
+      activeIndicators,
+      toggleIndicator,
+      clearIndicators,
+      activePlugins,
+      togglePlugin,
+      setPlugins,
+      cycleMagnetMode,
+      drawingTool,
+      setDrawingTool,
+      drawings,
+      addDrawing,
+      updateDrawing,
+      removeDrawing,
+      clearDrawings,
+      undoDrawing,
+      redoDrawing,
+      activeAccountId,
+      account,
+      positions,
+      orders,
+      positionPnl,
+      chartPositions,
+      chartOrders,
+      isFeedConnected,
+      setConfirmOrder,
+      setModifyingPosition,
+      setModifyingOrder,
+      oneClick,
+      toggleOneClick,
+      soundMuted,
+      toggleSoundMute,
+      onOrderSuccess,
+      submitOrderDirect,
+      quickOrder,
+      modifyPositionLevels,
+      closePosition,
+      closeAllPositions,
+      cancelOrder,
+      journalData,
+      journalLoading,
+      createJournal,
+      updateJournal,
+      deleteJournal,
+    ],
+  );
 
   return (
     <TerminalContext.Provider value={value}>
-      {children}
-
-      {/* Dialogs live with the state so any composition of panels gets them. */}
-      <PositionModifyDialog
-        key={modifyingPosition?.id ?? "no-position"}
-        position={modifyingPosition}
-        onClose={() => setModifyingPosition(null)}
-        onSaved={() => setModifyingPosition(null)}
-        tick={tick}
-        isFeedConnected={isFeedConnected}
-      />
-      <OrderModifyDialog
-        key={modifyingOrder?.id ?? "no-order"}
-        order={modifyingOrder}
-        onClose={() => setModifyingOrder(null)}
-        onSaved={() => setModifyingOrder(null)}
-        tick={tick}
-      />
-      <OrderConfirmDialog
-        isOpen={!!confirmOrder}
-        order={confirmOrder}
-        onConfirm={() => {
-          if (!confirmOrder?._submit) return;
-          setConfirmLoading(true);
-          confirmOrder
-            ._submit()
-            .then(() => onOrderSuccess())
-            .catch(() => {
-              // Submit paths toast their own reason; swallow so the rejection
-              // never escapes as an unhandled promise.
-            })
-            .finally(() => {
-              setConfirmLoading(false);
-              setConfirmOrder(null);
-            });
-        }}
-        onCancel={() => setConfirmOrder(null)}
-        loading={confirmLoading}
-        tick={tick}
-        symbolInfo={symbolInfo}
-      />
+      <TickBridge chartKey={chartKey} selectedSymbol={selectedSymbol}>
+        {children}
+        {/* Dialogs live with the state so any composition of panels gets them.
+            They render inside <TickBridge> because they display the live quote
+            while the user edits SL/TP — see <DialogsLayer> above. */}
+        <DialogsLayer
+          modifyingPosition={modifyingPosition}
+          modifyingOrder={modifyingOrder}
+          confirmOrder={confirmOrder}
+          confirmLoading={confirmLoading}
+          isFeedConnected={isFeedConnected}
+          symbolInfo={symbolInfo}
+          onClosePosition={() => setModifyingPosition(null)}
+          onCloseOrder={() => setModifyingOrder(null)}
+          onCancelConfirm={() => setConfirmOrder(null)}
+          onConfirmSubmit={() => {
+            if (!confirmOrder?._submit) return;
+            setConfirmLoading(true);
+            confirmOrder
+              ._submit()
+              .then(() => onOrderSuccess())
+              .catch(() => {
+                // Submit paths toast their own reason; swallow so the rejection
+                // never escapes as an unhandled promise.
+              })
+              .finally(() => {
+                setConfirmLoading(false);
+                setConfirmOrder(null);
+              });
+          }}
+        />
+      </TickBridge>
     </TerminalContext.Provider>
   );
 }

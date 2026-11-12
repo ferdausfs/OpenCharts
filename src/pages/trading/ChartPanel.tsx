@@ -17,16 +17,17 @@ import {
 } from "lightweight-charts";
 import { Clock, ListTree } from "lucide-react";
 import {
-  type Dispatch,
   type MouseEvent as ReactMouseEvent,
-  type SetStateAction,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useChartPreferences } from "../../hooks/useChartPreferences.ts";
+import { useTradingStore } from "../../services/store.tsx";
+import { TickContext } from "../../terminal/use-terminal.ts";
 import { BandsIndicator } from "../../lib/chart-plugins/bands-indicator/bands-indicator.ts";
 import { DeltaTooltipPrimitive } from "../../lib/chart-plugins/delta-tooltip/delta-tooltip.ts";
 import {
@@ -359,6 +360,8 @@ interface RtCtx {
   lastCandle: Ref<CandlestickData<Time> | null>;
   liveCandleTs: Ref<number>;
   legendVol: Ref<number>;
+  /** Volume shown in the OHLCV legend (last set legend's v). */
+  legendV: Ref<number>;
   gapAt: Ref<number>;
   bidLine: Ref<IPriceLine | null>;
   askLine: Ref<IPriceLine | null>;
@@ -367,7 +370,7 @@ interface RtCtx {
   timeframe: Timeframe;
   symbol: string;
   qc: ReturnType<typeof useQueryClient>;
-  setLegend: Dispatch<SetStateAction<OhlcvLegend | null>>;
+  setLegend: (l: OhlcvLegend | null) => void;
 }
 
 function intervalSecOf(tf: Timeframe): number {
@@ -411,6 +414,7 @@ function applyServerCandle(live: LiveCandleData, ctx: RtCtx): void {
     /* timestamp older than series — safe to ignore */
   }
   paintServerVolume(live, ts as Time, ctx);
+  ctx.legendV.current = live.volume || 0;
   ctx.setLegend(candleToLegend(bar, live.volume || 0));
 }
 
@@ -485,10 +489,9 @@ function applyTick(tick: TickData, ctx: RtCtx): void {
     /* safe to ignore */
   }
   paintTickVolume(bar, isContinuation, bucketTime, ctx);
-  ctx.setLegend((prevLegend) => ({
-    ...candleToLegend(bar, 0),
-    v: isContinuation ? (prevLegend?.v ?? 0) : 0,
-  }));
+  const v = isContinuation ? ctx.legendV.current : 0;
+  ctx.legendV.current = v;
+  ctx.setLegend({ ...candleToLegend(bar, 0), v });
 }
 
 function removePriceLineSafe(ref: Ref<IPriceLine | null>, series: ISeriesApi<"Candlestick">): void {
@@ -814,7 +817,7 @@ function restoreLegendOnLeave(
   restored: Ref<boolean>,
   lastCandle: Ref<CandlestickData<Time> | null>,
   legendVol: Ref<number>,
-  setLegend: Dispatch<SetStateAction<OhlcvLegend | null>>,
+  setLegend: (l: OhlcvLegend | null) => void,
 ): void {
   if (!restored.current && lastCandle.current) {
     setLegend(candleToLegend(lastCandle.current, legendVol.current));
@@ -955,6 +958,10 @@ function ChartLegendHeader({
   showOhlcLegend: boolean;
   showCountdown: boolean;
 }) {
+  // Live bid/ask come from the shared quote feed unless the host passes a
+  // tick — this small header re-renders per tick so the big panel doesn't.
+  const feed = useContext(TickContext);
+  const liveTick = tick ?? feed?.tick;
   return (
     <div className="absolute top-2 left-3 z-10 pointer-events-none select-none">
       <div className="flex items-center gap-2 text-[11px] font-mono leading-none mb-1">
@@ -971,7 +978,7 @@ function ChartLegendHeader({
         )}
       </div>
       {/* Secondary info row: Bid / Ask / Spread */}
-      {tick && <BidAskRow tick={tick} pipDigits={pipDigits} />}
+      {liveTick && <BidAskRow tick={liveTick} pipDigits={pipDigits} />}
     </div>
   );
 }
@@ -1156,6 +1163,25 @@ export function ChartPanel({
 
   // OHLCV legend state
   const [legend, setLegend] = useState<OhlcvLegend | null>(null);
+  // Legend writes are throttled: the real-time helpers fire per WS flush
+  // (~20/s) and re-rendering this component per flush was the single biggest
+  // jank source. Pending legends coalesce into one flush per 250ms.
+  const legendTimerRef = useRef<number | null>(null);
+  const pendingLegendRef = useRef<OhlcvLegend | null>(null);
+  const setLegendThrottled = useCallback((l: OhlcvLegend | null) => {
+    pendingLegendRef.current = l;
+    if (legendTimerRef.current !== null) return;
+    legendTimerRef.current = window.setTimeout(() => {
+      legendTimerRef.current = null;
+      if (pendingLegendRef.current) setLegend(pendingLegendRef.current);
+    }, 250);
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (legendTimerRef.current !== null) window.clearTimeout(legendTimerRef.current);
+      legendTimerRef.current = null;
+    };
+  }, []);
   // Candle countdown state. `countdownText` blanks it for timeframes that have
   // no meaningful countdown (1d, 1w) instead of the timer effect clearing state.
   const [countdown, setCountdown] = useState("");
@@ -1445,6 +1471,11 @@ export function ChartPanel({
   // Daily and weekly bars get no countdown; that is decided when rendering the
   // legend (see `countdownText`) so the effect never has to blank the state.
   useEffect(() => {
+    // Hidden countdown = no 1s re-render of this whole component (audit #29).
+    if (!chartPrefs.showCountdown) {
+      setCountdown("");
+      return;
+    }
     const intervalMs = TF_INTERVAL_MS[timeframe];
     if (!intervalMs || intervalMs >= 86_400_000) return;
     const tick = () => {
@@ -1457,7 +1488,7 @@ export function ChartPanel({
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [timeframe]);
+  }, [timeframe, chartPrefs.showCountdown]);
 
   // ── Create / destroy the chart instance ────────────────────
   useEffect(() => {
@@ -1781,7 +1812,6 @@ export function ChartPanel({
   // ── Refs for smooth real-time streaming ────────────────
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
   const lastLoadKeyRef = useRef<string>("");
-  const latestLiveCandleRef = useRef<typeof liveCandle | undefined>(undefined);
   // Authoritative server candle timestamp, normalised to unix MILLISECONDS —
   // used to ignore ticks that pre-date the latest server CandleUpdate (those can
   // pollute H/L after a WS flush delivers a buffered tick *after* its
@@ -1796,6 +1826,7 @@ export function ChartPanel({
   // effects can depend on `makeRtCtx` directly — it changes identity exactly when
   // colors / timeframe / symbol / queryClient change, so re-run timing matches
   // listing those values individually (refs and setLegend are stable).
+  const lastLegendVRef = useRef(0);
   const makeRtCtx = useCallback(
     (series: ISeriesApi<"Candlestick">): RtCtx => ({
       series,
@@ -1803,6 +1834,7 @@ export function ChartPanel({
       lastCandle: lastCandleRef,
       liveCandleTs: liveCandleTsRef,
       legendVol: legendVolRef,
+      legendV: lastLegendVRef,
       gapAt: lastGapRefetchAtRef,
       bidLine: bidLineRef,
       askLine: askLineRef,
@@ -1811,15 +1843,10 @@ export function ChartPanel({
       timeframe,
       symbol: selectedSymbol,
       qc: queryClient,
-      setLegend,
+      setLegend: setLegendThrottled,
     }),
-    [colors, timeframe, selectedSymbol, queryClient],
+    [colors, timeframe, selectedSymbol, queryClient, setLegendThrottled],
   );
-
-  // Keep latest live candle in a ref (avoids stale closure in setData effect)
-  useEffect(() => {
-    latestLiveCandleRef.current = liveCandle;
-  }, [liveCandle]);
 
   // Update candle data from server (historical fetch / periodic sync)
   useEffect(() => {
@@ -1839,7 +1866,11 @@ export function ChartPanel({
     lastCandleRef.current = chartData[chartData.length - 1] ?? null;
     setLegend(legendFromSeries(chartData, volumeData));
 
-    const buffered = latestLiveCandleRef.current;
+    // Read the freshest server candle straight from the store (not a prop) so
+    // a refetch lands without waiting for the next WS flush.
+    const buffered = isReplayingRef.current
+      ? undefined
+      : useTradingStore.getState().liveCandleUpdates[loadKey];
     if (!isNewChart) {
       // Periodic refetch — preserve viewport, re-apply latest live data.
       reapplyLive(buffered, ctx);
@@ -1876,28 +1907,83 @@ export function ChartPanel({
     applyTick(tick, makeRtCtx(series));
   }, [tick, makeRtCtx]);
 
-  // ── Line-cross price alerts (client-side, in-session) ──────────
-  // Fire a toast + beep when the live mid price crosses an alert-enabled
-  // horizontal line or trendline. Drawings are read from a ref so this runs
-  // only on tick changes.
+  // ── Imperative live-data pump ─────────────────────────────────
+  // The app wiring (panels.tsx / TradingPage) no longer passes tick/liveCandle
+  // props — re-rendering this 2,000-line component per WS flush is what made
+  // streaming feel heavy. The store is subscribed directly here and updates
+  // paint through series.update() / price lines with zero React renders. The
+  // prop-driven effects above stay for hosts that pass those props.
+  const isReplayingRef = useRef(isReplaying);
+  useEffect(() => {
+    isReplayingRef.current = isReplaying;
+  }, [isReplaying]);
+
+  // Line-cross price alerts (client-side, in-session): fire a toast + beep
+  // when the live mid price crosses an alert-enabled horizontal line or
+  // trendline. Drawings are read from a ref; detection runs in the pump below.
   const alertMidRef = useRef<number | null>(null);
   const alertFiredRef = useRef<Map<string, number>>(new Map());
+  const lastPumpTickRef = useRef<TickData | undefined>(undefined);
+  const lastPumpCandleRef = useRef<LiveCandleData | undefined>(undefined);
   useEffect(() => {
-    if (!tick) return;
-    const mid = (tick.bid + tick.ask) / 2;
-    const prev = alertMidRef.current;
-    alertMidRef.current = mid;
-    if (prev === null) return;
-    const nowSec = Math.floor(tick.timestamp / 1000);
-    const crossed = detectCrossings(drawingsRef.current, prev, mid, nowSec, alertFiredRef.current);
-    for (const d of crossed) {
-      toast.info(
-        "Price alert",
-        d.alertMessage ?? `${selectedSymbol} crossed your ${d.type} @ ${mid.toFixed(pipDigits)}`,
-      );
-      playAlertBeep();
-    }
-  }, [tick, selectedSymbol, pipDigits]);
+    if (isReplaying) return;
+    // Seed from the current store so re-subscribing (symbol/TF/color change)
+    // doesn't repaint an update that was already applied.
+    const fresh = useTradingStore.getState();
+    lastPumpCandleRef.current = fresh.liveCandleUpdates[`${selectedSymbol}:${timeframe}`];
+    lastPumpTickRef.current = fresh.ticks[selectedSymbol];
+    return useTradingStore.subscribe((state) => {
+      const series = candleSeriesRef.current;
+      if (!series || isReplayingRef.current) return;
+      const lc = state.liveCandleUpdates[`${selectedSymbol}:${timeframe}`];
+      if (lc && lc !== lastPumpCandleRef.current) {
+        lastPumpCandleRef.current = lc;
+        if (lastCandleRef.current) applyServerCandle(lc, makeRtCtx(series));
+      }
+      const t = state.ticks[selectedSymbol];
+      if (t && t !== lastPumpTickRef.current) {
+        lastPumpTickRef.current = t;
+        applyTick(t, makeRtCtx(series));
+        applyBidAskLines(
+          t,
+          { showBidLine: chartPrefs.showBidLine, showAskLine: chartPrefs.showAskLine },
+          makeRtCtx(series),
+        );
+        const mid = (t.bid + t.ask) / 2;
+        const prevMid = alertMidRef.current;
+        alertMidRef.current = mid;
+        if (prevMid != null) {
+          const crossed = detectCrossings(
+            drawingsRef.current,
+            prevMid,
+            mid,
+            Math.floor(Date.now() / 1000),
+            alertFiredRef.current,
+          );
+          for (const d of crossed) {
+            toast.info(
+              "Price alert",
+              d.alertMessage ??
+                `${selectedSymbol} crossed your ${d.type} @ ${mid.toFixed(pipDigits)}`,
+            );
+            playAlertBeep();
+          }
+        }
+      }
+    });
+  }, [
+    isReplaying,
+    selectedSymbol,
+    timeframe,
+    makeRtCtx,
+    chartPrefs.showBidLine,
+    chartPrefs.showAskLine,
+    pipDigits,
+  ]);
+
+  // ── Line-cross price alerts (client-side, in-session) ──────────
+  // Detection moved into the imperative pump above so alerts keep working
+  // without per-tick React renders.
 
   // ── Staleness watchdog ────────────────────────────────────────
   // Guards against the case where CandleUpdates stop arriving entirely
@@ -1936,17 +2022,19 @@ export function ChartPanel({
   }, [activePlugins, isDark, selectedSymbol, timeframe, symbolCategory]);
 
   // ── Live bid/ask price tracking lines ──────────────────────
-  // applyBidAskLines moves the existing price lines in-place (applyOptions) or
-  // creates them — remove+create would force two full chart redraws per tick.
+  // Re-applied when the preferences change; the per-tick moves happen in the
+  // imperative pump above. applyBidAskLines moves the existing price lines
+  // in-place (applyOptions) or creates them — remove+create would force two
+  // full chart redraws per tick.
   useEffect(() => {
     const series = candleSeriesRef.current;
     if (!series) return;
     applyBidAskLines(
-      tick,
+      useTradingStore.getState().ticks[selectedSymbol],
       { showBidLine: chartPrefs.showBidLine, showAskLine: chartPrefs.showAskLine },
       makeRtCtx(series),
     );
-  }, [tick, chartPrefs.showBidLine, chartPrefs.showAskLine, makeRtCtx]);
+  }, [chartPrefs.showBidLine, chartPrefs.showAskLine, makeRtCtx, selectedSymbol]);
 
   // ── Position/order overlays ────────────────────────────────
   useEffect(() => {

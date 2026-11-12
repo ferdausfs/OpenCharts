@@ -4,7 +4,7 @@ import { OrderPanel } from "../pages/trading/OrderPanel.tsx";
 import { OrdersTable } from "../pages/trading/OrdersTable.tsx";
 import { PositionsTable } from "../pages/trading/PositionsTable.tsx";
 import { WatchlistPanel } from "../pages/trading/WatchlistPanel.tsx";
-import { useTerminal } from "./use-terminal.ts";
+import { useTerminal, useTickFeed } from "./use-terminal.ts";
 
 /**
  * Panels that can be mounted on their own.
@@ -18,6 +18,7 @@ import { useTerminal } from "./use-terminal.ts";
 /** The chart: candles, indicators, drawings, position overlays, replay. */
 export function Chart() {
   const t = useTerminal();
+  const tk = useTickFeed();
   return (
     <ChartPanel
       candles={t.replayCandles ?? t.candles ?? []}
@@ -38,8 +39,8 @@ export function Chart() {
       stayInDrawingMode={t.chartPrefs.stayInDrawingMode}
       positions={t.chartPositions}
       orders={t.chartOrders}
-      tick={t.replayCandles ? undefined : t.tick}
-      liveCandle={t.replayCandles ? undefined : t.liveCandle}
+      tick={t.replayCandles ? undefined : tk.tick}
+      liveCandle={t.replayCandles ? undefined : tk.liveCandle}
       pipDigits={t.pipDigits}
       symbolInfo={t.symbolInfo}
       onModifyPosition={t.modifyPositionLevels}
@@ -59,11 +60,12 @@ export function Chart() {
 /** Market / limit / stop order entry for the charted symbol. */
 export function OrderTicket() {
   const t = useTerminal();
+  const tk = useTickFeed();
   return (
     <OrderPanel
       symbol={t.selectedSymbol}
       symbolInfo={t.symbolInfo}
-      tick={t.tick}
+      tick={tk.tick}
       accountId={t.activeAccountId}
       oneClick={t.oneClick}
       onToggleOneClick={t.toggleOneClick}
@@ -80,16 +82,18 @@ export function OrderTicket() {
 /** Depth ladder around the live mid price. */
 export function DepthLadder() {
   const t = useTerminal();
-  return <DOMPanel symbol={t.selectedSymbol} tick={t.tick} />;
+  const tk = useTickFeed();
+  return <DOMPanel symbol={t.selectedSymbol} tick={tk.tick} />;
 }
 
 /** Instrument list with live prices. */
 export function Watchlist() {
   const t = useTerminal();
+  const tk = useTickFeed();
   return (
     <WatchlistPanel
       symbols={t.symbols}
-      ticks={t.ticks}
+      ticks={tk.ticks}
       selectedSymbol={t.selectedSymbol}
       onSelect={t.setSelectedSymbol}
       accountId={t.activeAccountId}

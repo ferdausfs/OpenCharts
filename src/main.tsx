@@ -1,11 +1,15 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { safeSession } from "./lib/safe-storage.ts";
+import { initTheme } from "./lib/theme.ts";
 import { Root } from "./Root.tsx";
 import "./styles/global.css";
 import "./styles/app.css";
 
 /** Entry point for the hosted demo. The app itself lives in Root.tsx. */
+
+// Apply the persisted theme class before the first paint so there is no flash.
+initTheme();
 
 // ── Stale-deploy recovery ─────────────────────────────────────────
 // After a deploy, a tab still running the old build requests lazy chunks whose

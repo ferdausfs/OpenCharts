@@ -1,6 +1,7 @@
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useContext, useMemo } from "react";
 import { formatNumber, cn } from "../../lib/utils.ts";
 import { isHyperliquidMode } from "../../hyperliquid/ui/mode.ts";
+import { TickContext } from "../../terminal/use-terminal.ts";
 
 // Live brokers show the real book; loaded on demand so the demo bundle is unchanged.
 const HlDepthPanel = lazy(() =>
@@ -27,6 +28,10 @@ function depthAt(symbol: string, price: number, spread: number, base: number, ra
 }
 
 export function DOMPanel(props: { symbol: string; tick?: { bid: number; ask: number } }) {
+  // When no explicit tick prop is passed, read the shared quote feed (the
+  // provider's TickBridge) so the ladder stays live without prop plumbing.
+  const feed = useContext(TickContext);
+  const tick = props.tick ?? feed?.tick;
   if (isHyperliquidMode()) {
     return (
       <Suspense fallback={null}>
@@ -34,7 +39,7 @@ export function DOMPanel(props: { symbol: string; tick?: { bid: number; ask: num
       </Suspense>
     );
   }
-  return <SimulatedDOMPanel {...props} />;
+  return <SimulatedDOMPanel symbol={props.symbol} tick={tick} />;
 }
 
 function SimulatedDOMPanel({

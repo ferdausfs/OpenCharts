@@ -12,12 +12,25 @@
     <link rel="icon" type="image/png" href="/icons/icon-192x192.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
     <link rel="manifest" href="/manifest.json" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <!-- Self-hosted fonts: preload the two primary subsets so first paint
+         doesn't wait on the stylesheet round-trip. -->
+    <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link
+      rel="preload"
+      href="/fonts/jetbrains-mono-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <meta
       name="description"
       content="OpenCharts — an open-source trading terminal with advanced charting, drawing tools, watchlist, DOM and a built-in paper-trading engine."
     />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#0b0e14" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -31,7 +44,7 @@
     <title>OpenCharts — Open-Source Trading Terminal</title>
   </head>
   <body>
-    <noscript>OpenBroker needs JavaScript to run. It is a non-custodial trading interface and cannot work without it.</noscript>
+    <noscript>OpenCharts needs JavaScript to run. It is a non-custodial trading interface and cannot work without it.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

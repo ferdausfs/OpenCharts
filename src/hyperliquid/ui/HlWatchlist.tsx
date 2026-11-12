@@ -141,7 +141,7 @@ export function HlWatchlist({ symbols, ticks, selectedSymbol, onSelect }: Watchl
           <ul className="relative" style={{ height: rows.length * ROW_HEIGHT }} aria-label="Markets">
             {rows.slice(start, end).map((s, i) => {
               const index = start + i;
-              const t = ticks[s.name];
+              const t = ticks?.[s.name];
               const isFav = favorites.has(s.name);
               const market = registry?.bySymbol(s.name);
               const lev = market?.maxLeverage ?? (s as { maxLeverage?: number }).maxLeverage;

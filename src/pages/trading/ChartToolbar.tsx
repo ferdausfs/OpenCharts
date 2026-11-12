@@ -19,6 +19,7 @@ import {
   Magnet,
   Maximize2,
   Minus,
+  Moon,
   MoveUpRight,
   MoveVertical,
   Newspaper,
@@ -30,15 +31,18 @@ import {
   Spline,
   Square,
   Star,
+  Sun,
   Trash2,
   TrendingUp,
   Triangle,
   Type,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { INDICATOR_REGISTRY, type IndicatorType } from "../../lib/indicators.ts";
 import { cn, formatNumber } from "../../lib/utils.ts";
+import { TickContext } from "../../terminal/use-terminal.ts";
+import { isDarkTheme, subscribeTheme, toggleTheme } from "../../lib/theme.ts";
 import {
   type DrawingLine,
   type DrawingTool,
@@ -140,23 +144,55 @@ export function ChartToolbar({
   const [showSymbolSearch, setShowSymbolSearch] = useState(false);
   const [symbolFilter, setSymbolFilter] = useState("");
 
-  const filteredSymbols = symbols.filter(
-    (s) =>
-      s.name.toLowerCase().includes(symbolFilter.toLowerCase()) ||
-      (s.category || "").toLowerCase().includes(symbolFilter.toLowerCase()),
+  // Live quotes from the shared quote feed unless the host passes a tick.
+  const feed = useContext(TickContext);
+  const liveTick = tick ?? feed?.tick;
+  // Reactive theme — flips the icon the moment the preference changes.
+  const isDark = useSyncExternalStore(subscribeTheme, isDarkTheme, () => true);
+
+  const filteredSymbols = useMemo(
+    () =>
+      symbols.filter(
+        (s) =>
+          s.name.toLowerCase().includes(symbolFilter.toLowerCase()) ||
+          (s.category || "").toLowerCase().includes(symbolFilter.toLowerCase()),
+      ),
+    [symbols, symbolFilter],
   );
+
+  // Close the symbol dropdown on outside click / Escape.
+  const symbolBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showSymbolSearch) return;
+    const dismiss = () => {
+      setShowSymbolSearch(false);
+      setSymbolFilter("");
+    };
+    const onDown = (e: MouseEvent) => {
+      if (symbolBoxRef.current && !symbolBoxRef.current.contains(e.target as Node)) dismiss();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") dismiss();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showSymbolSearch]);
 
   // Spread in pips/points: (ask - bid) / pipSize. Previously this multiplied
   // by contractSize which produced a meaningless quote-currency-per-lot number
   // (e.g. 9 pips on GBPJPY rendered as "900").
-  const spread = tick
-    ? ((tick.ask - tick.bid) * 10 ** getPipDigits(symbolInfo, selectedSymbol)).toFixed(1)
+  const spread = liveTick
+    ? ((liveTick.ask - liveTick.bid) * 10 ** getPipDigits(symbolInfo, selectedSymbol)).toFixed(1)
     : "--";
 
   return (
     <div className="flex items-center gap-1 px-2 py-1 border-b border-border bg-card text-xs shrink-0 overflow-x-auto md:overflow-visible flex-nowrap md:flex-wrap no-scrollbar">
       {/* Symbol Selector — TradingView style */}
-      <div className="relative shrink-0">
+      <div ref={symbolBoxRef} className="relative shrink-0">
         <button
           onClick={() => setShowSymbolSearch((v) => !v)}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-secondary font-bold text-sm tracking-tight"
@@ -267,18 +303,18 @@ export function ChartToolbar({
       </div>
 
       {/* Live Price — bid / ask badges like TradingView */}
-      {tick && (
+      {liveTick && (
         <div className="flex items-center gap-1 md:gap-1.5 px-1.5 md:px-2 border-l border-r border-border shrink-0">
           <span className="inline-flex items-center gap-1 px-1 md:px-1.5 py-0.5 rounded bg-[#0ecb81]/15 text-[#0ecb81] font-mono font-bold text-[12px] md:text-[13px] tabular-nums tracking-tight">
             {formatNumber(
-              tick.bid,
+              liveTick.bid,
               symbolInfo?.tickSize ? String(symbolInfo.tickSize).split(".")[1]?.length || 2 : 5,
             )}
           </span>
           <span className="text-muted-foreground text-[10px] font-medium">/</span>
           <span className="inline-flex items-center gap-1 px-1 md:px-1.5 py-0.5 rounded bg-[#f6465d]/15 text-[#f6465d] font-mono font-bold text-[12px] md:text-[13px] tabular-nums tracking-tight">
             {formatNumber(
-              tick.ask,
+              liveTick.ask,
               symbolInfo?.tickSize ? String(symbolInfo.tickSize).split(".")[1]?.length || 2 : 5,
             )}
           </span>
@@ -425,6 +461,14 @@ export function ChartToolbar({
           active={showRightPanel && rightPanel === "tv-analysis"}
           onClick={() => onRightPanel("tv-analysis")}
         />
+        <div className="h-4 border-l border-border mx-1" />
+        <button
+          onClick={toggleTheme}
+          title={isDark ? "Switch to light theme" : "Switch to dark theme"}
+          className="px-1.5 py-1 rounded hover:bg-secondary text-muted-foreground"
+        >
+          {isDark ? <Sun className="h-3 w-3" /> : <Moon className="h-3 w-3" />}
+        </button>
         <div className="h-4 border-l border-border mx-1" />
         <button
           onClick={onToggleRightPanel}

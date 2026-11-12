@@ -36,9 +36,6 @@ export interface TerminalContextValue {
   symbols: Symbol[];
   symbolInfo: Symbol | undefined;
   pipDigits: number;
-  tick: { bid: number; ask: number; timestamp: number } | undefined;
-  /** Every symbol's latest quote, for list views. */
-  ticks: Record<string, { bid: number; ask: number; timestamp: number }>;
   isDark: boolean;
 
   // Timeframe
@@ -47,7 +44,6 @@ export interface TerminalContextValue {
 
   // Chart data
   candles: ReturnType<typeof useCandles>["data"];
-  liveCandle: ReturnType<typeof useTradingStore.getState>["liveCandleUpdates"][string] | undefined;
   replayCandles: ReturnType<typeof useReplayChartData>["replayCandles"];
   replayTradeEvents: ReturnType<typeof useReplayChartData>["replayTradeEvents"];
   isReplaying: boolean;
@@ -121,6 +117,35 @@ export function useTerminal(): TerminalContextValue {
   if (!value) {
     throw new Error(
       "[opencharts] Terminal panels must be rendered inside <TerminalProvider>. " +
+        "Use <Terminal /> for the standard layout, or wrap your own composition.",
+    );
+  }
+  return value;
+}
+
+/**
+ * High-frequency quote data, split from TerminalContext so per-tick updates
+ * re-render only the small panels that actually show quotes (DOM, order
+ * ticket, watchlist) — not the chart, toolbar or page layout.
+ *
+ * ChartPanel does not consume this at all: it paints ticks imperatively
+ * through the store subscription, so live streaming costs zero React renders.
+ */
+export interface TickContextValue {
+  tick: { bid: number; ask: number; timestamp: number } | undefined;
+  /** Every symbol's latest quote, for list views. */
+  ticks: Record<string, { bid: number; ask: number; timestamp: number }>;
+  /** Latest server-aggregated candle for the charted symbol:timeframe. */
+  liveCandle: ReturnType<typeof useTradingStore.getState>["liveCandleUpdates"][string] | undefined;
+}
+
+export const TickContext = createContext<TickContextValue | null>(null);
+
+export function useTickFeed(): TickContextValue {
+  const value = useContext(TickContext);
+  if (!value) {
+    throw new Error(
+      "[opencharts] Tick-consuming panels must be rendered inside <TerminalProvider>. " +
         "Use <Terminal /> for the standard layout, or wrap your own composition.",
     );
   }

@@ -1,10 +1,11 @@
-import { lazy, Suspense, useState, useCallback, useMemo } from "react";
+import { lazy, Suspense, useState, useCallback, useMemo, useContext } from "react";
 import { Star } from "lucide-react";
 import { usePlaceOrder } from "../../services/queries.ts";
 import { formatNumber, cn } from "../../lib/utils.ts";
 import { toast } from "../../services/toast.ts";
 import { safeStorage } from "../../lib/safe-storage.ts";
 import { isHyperliquidMode } from "../../hyperliquid/ui/mode.ts";
+import { TickContext } from "../../terminal/use-terminal.ts";
 
 // The Hyperliquid watchlist (categories, search, windowing, risk badges) is
 // loaded on demand so it never reaches the default demo bundle.
@@ -21,7 +22,7 @@ export interface WatchlistPanelProps {
     category?: string;
     isActive?: boolean;
   }>;
-  ticks: Record<string, { bid: number; ask: number; timestamp: number }>;
+  ticks?: Record<string, { bid: number; ask: number; timestamp: number }>;
   selectedSymbol: string;
   onSelect: (s: string) => void;
   oneClick?: boolean;
@@ -31,14 +32,17 @@ export interface WatchlistPanelProps {
 
 /** The instrument list: the Hyperliquid variant when that adapter is installed, else the generic one. */
 export function WatchlistPanel(props: WatchlistPanelProps) {
+  // Fall back to the shared quote feed when the host doesn't pass ticks.
+  const feed = useContext(TickContext);
+  const ticks = props.ticks ?? feed?.ticks ?? {};
   if (isHyperliquidMode()) {
     return (
       <Suspense fallback={null}>
-        <HlWatchlist {...props} />
+        <HlWatchlist {...props} ticks={ticks} />
       </Suspense>
     );
   }
-  return <GenericWatchlistPanel {...props} />;
+  return <GenericWatchlistPanel {...props} ticks={ticks} />;
 }
 
 function GenericWatchlistPanel({
@@ -145,7 +149,7 @@ function GenericWatchlistPanel({
       </div>
       <div className="flex-1 overflow-y-auto">
         {filtered.map((s) => {
-          const t = ticks[s.name];
+          const t = ticks?.[s.name];
           const isFav = favorites.has(s.name);
           const handleQuickTrade = (side: "BUY" | "SELL") => {
             if (!isFeedConnected) {
