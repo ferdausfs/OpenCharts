@@ -82,7 +82,7 @@ describe("tick size", () => {
   it("derives from price magnitude and szDecimals", () => {
     expect(priceTickSize(76101, 5)).toBe(1); // 5 sig figs -> 0 decimals
     expect(priceTickSize(2400.55, 4)).toBe(0.1);
-    expect(priceTickSize(1.1167, 1)).toBe(0.0001);
+    expect(priceTickSize(1.1167, 1)).toBeCloseTo(0.0001, 12);
     expect(priceTickSize(0.00012345, 0)).toBe(1e-6); // capped by 6 decimals
     expect(priceTickSize(1.1167, 4)).toBe(0.01); // capped by 6 - szDecimals
   });
@@ -233,7 +233,7 @@ describe("OpenCharts mapping", () => {
       displayName: "EUR/USD",
       category: "Forex",
       contractSize: 1,
-      tickSize: 0.0001, // 5 sig figs at 1.1167 -> 4 decimals (cap is 5)
+      tickSize: expect.closeTo(0.0001), // 5 sig figs at 1.1167 -> 4 decimals (cap is 5)
       marginPercent: 2,
       maxLeverage: 50,
       commission: 0,

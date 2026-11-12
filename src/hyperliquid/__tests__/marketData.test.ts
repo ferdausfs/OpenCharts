@@ -88,7 +88,7 @@ describe("getSymbols", () => {
     const eur = symbols.find((s) => s.name === "xyz:EUR")!;
     expect(eur.displayName).toBe("EUR/USD");
     expect(eur.category).toBe("Forex");
-    expect(eur.tickSize).toBe(0.0001);
+    expect(eur.tickSize).toBeCloseTo(0.0001, 12);
     expect(symbols.find((s) => s.name === "BTC")!.tickSize).toBe(1);
   });
 

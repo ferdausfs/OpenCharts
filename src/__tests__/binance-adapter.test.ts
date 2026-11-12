@@ -68,7 +68,7 @@ describe("buildKlineUrl", () => {
 describe("buildStreamUrl", () => {
   it("builds a combined book-ticker stream", () => {
     expect(buildStreamUrl(["BTCUSD", "ETHUSD"])).toBe(
-      "wss://stream.binance.com:9443/stream?streams=btcusdt@bookTicker/ethusdt@bookTicker",
+      "wss://data-stream.binance.vision/stream?streams=btcusdt@bookTicker/ethusdt@bookTicker",
     );
   });
 });
