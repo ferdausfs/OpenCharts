@@ -1,6 +1,7 @@
-name: Deploy demo
+name: Deploy live terminal
 
-# Publishes the terminal to GitHub Pages so the README can link a live demo.
+# Publishes the terminal to GitHub Pages with the live Binance market-data
+# adapter (real-time quotes via Binance's public API — paper trading engine).
 # Requires Pages to be enabled once, in Settings → Pages → Source: GitHub Actions.
 
 on:
@@ -35,10 +36,13 @@ jobs:
       - run: npm ci
 
       # BASE_PATH makes asset URLs resolve under /<repo>/ on project Pages.
+      # VITE_ADAPTER=binance builds the live market-data adapter in instead
+      # of the bundled demo replay feed.
       - name: Build
         run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_ADAPTER: binance
 
       - uses: actions/configure-pages@v5
 
