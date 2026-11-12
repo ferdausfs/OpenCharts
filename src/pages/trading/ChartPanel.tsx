@@ -1472,10 +1472,9 @@ export function ChartPanel({
   // legend (see `countdownText`) so the effect never has to blank the state.
   useEffect(() => {
     // Hidden countdown = no 1s re-render of this whole component (audit #29).
-    if (!chartPrefs.showCountdown) {
-      setCountdown("");
-      return;
-    }
+    // No setState here when hidden: the render gates the text on
+    // showCountdown, so the state can simply go stale while unused.
+    if (!chartPrefs.showCountdown) return;
     const intervalMs = TF_INTERVAL_MS[timeframe];
     if (!intervalMs || intervalMs >= 86_400_000) return;
     const tick = () => {
@@ -1868,9 +1867,8 @@ export function ChartPanel({
 
     // Read the freshest server candle straight from the store (not a prop) so
     // a refetch lands without waiting for the next WS flush.
-    const buffered = isReplayingRef.current
-      ? undefined
-      : useTradingStore.getState().liveCandleUpdates[loadKey];
+    const fresh = useTradingStore.getState();
+    const buffered = fresh.isReplaying ? undefined : fresh.liveCandleUpdates[loadKey];
     if (!isNewChart) {
       // Periodic refetch — preserve viewport, re-apply latest live data.
       reapplyLive(buffered, ctx);
@@ -1913,11 +1911,6 @@ export function ChartPanel({
   // streaming feel heavy. The store is subscribed directly here and updates
   // paint through series.update() / price lines with zero React renders. The
   // prop-driven effects above stay for hosts that pass those props.
-  const isReplayingRef = useRef(isReplaying);
-  useEffect(() => {
-    isReplayingRef.current = isReplaying;
-  }, [isReplaying]);
-
   // Line-cross price alerts (client-side, in-session): fire a toast + beep
   // when the live mid price crosses an alert-enabled horizontal line or
   // trendline. Drawings are read from a ref; detection runs in the pump below.
@@ -1934,7 +1927,9 @@ export function ChartPanel({
     lastPumpTickRef.current = fresh.ticks[selectedSymbol];
     return useTradingStore.subscribe((state) => {
       const series = candleSeriesRef.current;
-      if (!series || isReplayingRef.current) return;
+      // Replay state read straight off the store snapshot — no ref mirror,
+      // which the react-hooks lint rules reject.
+      if (!series || state.isReplaying) return;
       const lc = state.liveCandleUpdates[`${selectedSymbol}:${timeframe}`];
       if (lc && lc !== lastPumpCandleRef.current) {
         lastPumpCandleRef.current = lc;
