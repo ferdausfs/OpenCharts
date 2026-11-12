@@ -9,13 +9,35 @@ type ReplaySessionData = NonNullable<Awaited<ReturnType<typeof api.replayGetSess
 type ReplayTradeEvents = ReplaySessionData["tradeEvents"];
 type TickBar = ReplaySessionData["tickBuffer"][number];
 
-/** All 1m bars at or before the playback cursor, as chart candles. */
+/** A replay buffer bar spans one minute. */
+const BAR_MS = 60_000;
+
+/** All 1m bars at or before the playback cursor, as chart candles.
+ *
+ * While the cursor sits inside a bar, that bar is presented as a forming
+ * candle whose close has walked proportionally from its open toward its close
+ * (high/low stay final — the buffer has no intra-bar path). Without this the
+ * chart would sit still for up to a minute per bar at 1x, which reads as
+ * "replay is not playing".
+ */
 function sliceBufferToCursor(buf: TickBar[], cursorMs: number | null): Candle[] {
   const cutoff = cursorMs ?? buf[0]?.t ?? 0;
   const out: Candle[] = [];
+  let lastBarMs: number | null = null;
   for (const b of buf) {
     if (b.t > cutoff) break;
+    lastBarMs = b.t;
     out.push({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v });
+  }
+  const last = out[out.length - 1];
+  if (cursorMs != null && last && lastBarMs != null) {
+    const progress = Math.min(1, Math.max(0, (cursorMs - lastBarMs) / BAR_MS));
+    if (progress < 1) {
+      out[out.length - 1] = {
+        ...last,
+        close: last.open + (last.close - last.open) * progress,
+      };
+    }
   }
   return out;
 }
