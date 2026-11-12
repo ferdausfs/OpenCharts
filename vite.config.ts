@@ -4,6 +4,15 @@ import fs from "fs";
 import path from "path";
 import { buildCsp, buildHeadersFile, extraConnectFromEnv } from "./src/hyperliquid/compliance/csp.ts";
 
+// The Binance example adapter (examples/binance-adapter/binance-adapter.ts)
+// fetches public market data from binance.vision. Only whitelisted when the
+// build targets VITE_ADAPTER=binance, so the demo build keeps its strict CSP.
+// Keep in sync with REST_BASE / WS_BASE in binance-adapter.ts.
+const BINANCE_CONNECT_ORIGINS = [
+  "https://data-api.binance.vision",
+  "wss://data-stream.binance.vision",
+];
+
 /**
  * Production-only security headers. The strict CSP is injected as a <meta> tag
  * (so it also applies on hosts that cannot set headers) and a matching
@@ -20,7 +29,10 @@ function securityHeaders(): Plugin {
     configResolved(config) {
       const env = loadEnv(config.mode, config.root, ["VITE_"]);
       const opts = {
-        extraConnect: extraConnectFromEnv(env),
+        extraConnect: [
+          ...extraConnectFromEnv(env),
+          ...(env.VITE_ADAPTER === "binance" ? BINANCE_CONNECT_ORIGINS : []),
+        ],
         allowTradingView: env.VITE_CSP_ALLOW_TRADINGVIEW === "1",
       };
       csp = buildCsp(opts);
