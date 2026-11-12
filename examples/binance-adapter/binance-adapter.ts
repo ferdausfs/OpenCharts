@@ -27,8 +27,8 @@ import type { Candle, Symbol } from "../../src/services/schemas.ts";
  *     `/api/v3/exchangeInfo` and derive tick sizes from the filters.
  */
 
-const REST_BASE = "https://api.binance.com/api/v3";
-const WS_BASE = "wss://stream.binance.com:9443/stream";
+const REST_BASE = "https://data-api.binance.vision/api/v3";
+const WS_BASE = "wss://data-stream.binance.vision/stream";
 
 /** Display name → Binance pair. USD here means USDT on Binance. */
 const SYMBOL_MAP: Record<string, { pair: string; label: string; tickSize: number }> = {
