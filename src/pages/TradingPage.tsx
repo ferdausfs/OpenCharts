@@ -358,13 +358,19 @@ export function TradingPage() {
           </button>
         )}
         {mobilePanelOpen && (
-          <div className="fixed inset-x-0 bottom-0 z-50 max-h-[70vh] overflow-y-auto bg-card border-t border-border rounded-t-2xl shadow-2xl safe-area-bottom">
-            <div className="flex justify-center py-1">
-              <button
-                onClick={() => setMobilePanelOpen(false)}
-                className="w-10 h-1.5 rounded-full bg-muted-foreground/30"
-              />
-            </div>
+          <>
+            {/* Scrim (#25): the chart used to stay tappable behind the sheet. */}
+            <div
+              className="fixed inset-0 z-40 bg-black/50 md:hidden"
+              onClick={() => setMobilePanelOpen(false)}
+            />
+            <div className="fixed inset-x-0 bottom-0 z-50 max-h-[70vh] overflow-y-auto bg-card border-t border-border rounded-t-2xl shadow-2xl safe-area-bottom animate-slide-up md:hidden">
+              <div className="flex justify-center py-1">
+                <button
+                  onClick={() => setMobilePanelOpen(false)}
+                  className="w-10 h-1.5 rounded-full bg-muted-foreground/30"
+                />
+              </div>
             <MobileTradingPanel
               symbol={selectedSymbol}
               positions={positions || []}
@@ -393,7 +399,8 @@ export function TradingPage() {
                 setMobilePanelOpen(false);
               }}
             />
-          </div>
+            </div>
+          </>
         )}
       </div>
 

@@ -206,7 +206,7 @@ function GenericWatchlistPanel({
                     <div className="text-sell">{formatNumber(t.ask, 5)}</div>
                   </div>
                   {oneClick && (
-                    <div className="hidden group-hover:flex flex-col gap-0.5 ml-1">
+                    <div className="hidden gap-0.5 ml-1 max-md:flex md:flex-col md:group-hover:flex">
                       <button
                         onClick={() => handleQuickTrade("BUY")}
                         className="px-1 py-0.5 text-[8px] rounded bg-buy/20 text-buy hover:bg-buy/30 font-semibold"

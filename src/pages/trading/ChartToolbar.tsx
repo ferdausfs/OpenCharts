@@ -305,14 +305,14 @@ export function ChartToolbar({
       {/* Live Price — bid / ask badges like TradingView */}
       {liveTick && (
         <div className="flex items-center gap-1 md:gap-1.5 px-1.5 md:px-2 border-l border-r border-border shrink-0">
-          <span className="inline-flex items-center gap-1 px-1 md:px-1.5 py-0.5 rounded bg-[#0ecb81]/15 text-[#0ecb81] font-mono font-bold text-[12px] md:text-[13px] tabular-nums tracking-tight">
+          <span className="inline-flex items-center gap-1 px-1 md:px-1.5 py-0.5 rounded bg-buy/15 text-buy font-mono font-bold text-[12px] md:text-[13px] tabular-nums tracking-tight">
             {formatNumber(
               liveTick.bid,
               symbolInfo?.tickSize ? String(symbolInfo.tickSize).split(".")[1]?.length || 2 : 5,
             )}
           </span>
           <span className="text-muted-foreground text-[10px] font-medium">/</span>
-          <span className="inline-flex items-center gap-1 px-1 md:px-1.5 py-0.5 rounded bg-[#f6465d]/15 text-[#f6465d] font-mono font-bold text-[12px] md:text-[13px] tabular-nums tracking-tight">
+          <span className="inline-flex items-center gap-1 px-1 md:px-1.5 py-0.5 rounded bg-sell/15 text-sell font-mono font-bold text-[12px] md:text-[13px] tabular-nums tracking-tight">
             {formatNumber(
               liveTick.ask,
               symbolInfo?.tickSize ? String(symbolInfo.tickSize).split(".")[1]?.length || 2 : 5,

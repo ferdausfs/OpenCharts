@@ -111,7 +111,22 @@ export function ReplayHUD({ accountId }: { accountId: string }) {
         </button>
       )}
 
-      <div className="flex items-center gap-0.5">
+      {/* Speed — compact select on phones (audit #26), buttons elsewhere. */}
+      <select
+        value={replaySpeed}
+        onChange={(e) => handleSpeed(Number(e.target.value) as Speed)}
+        disabled={!isReplaying}
+        aria-label="Replay speed"
+        className="sm:hidden text-[11px] bg-secondary border border-border rounded px-1 py-0.5 text-foreground disabled:opacity-40"
+      >
+        {SPEED_OPTIONS.map((s) => (
+          <option key={s} value={s}>
+            {s}x
+          </option>
+        ))}
+      </select>
+
+      <div className="hidden sm:flex items-center gap-0.5">
         {SPEED_OPTIONS.map((s) => (
           <button
             key={s}

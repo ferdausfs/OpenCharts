@@ -889,7 +889,7 @@ function OhlcvCell({
       <span className="text-muted-foreground/70">{label}</span>
       <span
         className={cn(
-          up ? "text-[#0ecb81]" : "text-[#f6465d]",
+          up ? "text-buy" : "text-sell",
           bold ? "font-semibold" : "font-medium",
         )}
       >
@@ -907,9 +907,7 @@ function OhlcvLegendRow({ legend, pipDigits }: { legend: OhlcvLegend; pipDigits:
       <OhlcvCell label="H" value={legend.h} digits={pipDigits} up={up} />
       <OhlcvCell label="L" value={legend.l} digits={pipDigits} up={up} />
       <OhlcvCell label="C" value={legend.c} digits={pipDigits} up={up} bold />
-      <span
-        className={cn("font-semibold", legend.change >= 0 ? "text-[#0ecb81]" : "text-[#f6465d]")}
-      >
+      <span className={cn("font-semibold", legend.change >= 0 ? "text-buy" : "text-sell")}>
         {legend.change >= 0 ? "+" : ""}
         {legend.change.toFixed(2)}%
       </span>
@@ -928,9 +926,9 @@ function BidAskRow({ tick, pipDigits }: { tick: TickData; pipDigits: number }) {
   return (
     <div className="flex items-center gap-2 text-[10px] font-mono">
       <span className="text-muted-foreground/50">Bid</span>
-      <span className="text-[#0ecb81]/80">{tick.bid.toFixed(pipDigits)}</span>
+      <span className="text-buy/80">{tick.bid.toFixed(pipDigits)}</span>
       <span className="text-muted-foreground/50">Ask</span>
-      <span className="text-[#f6465d]/80">{tick.ask.toFixed(pipDigits)}</span>
+      <span className="text-sell/80">{tick.ask.toFixed(pipDigits)}</span>
       <span className="text-muted-foreground/50">Spread</span>
       <span className="text-foreground/50">{spread}</span>
     </div>

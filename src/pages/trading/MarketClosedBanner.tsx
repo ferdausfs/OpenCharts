@@ -169,7 +169,7 @@ function ScheduleMarketClosedBanner({ symbolInfo }: Props) {
     <div
       role="status"
       aria-live="polite"
-      className="flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-medium"
+      className="flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-warning text-xs font-medium"
     >
       <Clock className="h-3 w-3 shrink-0" />
       <span>

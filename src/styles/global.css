@@ -233,13 +233,15 @@
     @apply p-1.5;
   }
 
-  /* Touch-friendly tap targets (#65) */
+  /* Touch-friendly tap targets (#65). Height only — a min-WIDTH here forced
+     every compact toolbar / timeframe / HUD button to ≥44px wide and made the
+     chart toolbar overflow on phones (audit #21); density matters in a
+     trading terminal, so the width floor is dropped. */
   button,
   a,
   select,
   input[type="checkbox"] {
     min-height: 44px;
-    min-width: 44px;
   }
   input,
   select,

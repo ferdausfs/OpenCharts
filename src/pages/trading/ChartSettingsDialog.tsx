@@ -9,7 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { isHyperliquidMode } from "../../hyperliquid/ui/mode.ts";
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { type ChartPreferences, updateChartPreferences } from "../../hooks/useChartPreferences.ts";
 import { useDragOffset } from "../../hooks/useDragOffset.ts";
 import { cn } from "../../lib/utils.ts";
@@ -499,6 +499,15 @@ export function ChartSettingsDialog(props: ChartSettingsDialogProps) {
   const { open, onClose } = props;
   const [tab, setTab] = useState<TabId>("appearance");
   const drag = useDragOffset();
+  // Escape closes the dialog (audit #24: it previously only had X/backdrop).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
   if (!open) return null;
 
   const close = () => {
@@ -515,7 +524,7 @@ export function ChartSettingsDialog(props: ChartSettingsDialogProps) {
       onClick={close}
     >
       <div
-        className="flex h-[440px] w-[560px] max-w-[94vw] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
+        className="flex h-[440px] max-h-[90vh] w-[560px] max-w-[94vw] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
         style={drag.style}
         onClick={(e) => e.stopPropagation()}
       >
