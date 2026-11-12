@@ -44,7 +44,7 @@ import {
   TIMEFRAMES,
   type Timeframe,
 } from "../pages/trading/constants.ts";
-import { useReplayChartData } from "../pages/trading/useReplayChartData.ts";
+import { timeframeToMs, useReplayChartData } from "../pages/trading/useReplayChartData.ts";
 import { useReplayPlayback } from "../pages/trading/useReplayPlayback.ts";
 import { getPipDigits } from "../pages/trading/utils.ts";
 
@@ -302,8 +302,8 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   }, [chartKey]);
 
   const { data: candles = [] } = useCandles(selectedSymbol, timeframe, candleLimit, replayVersion);
-  const { replayCandles, replayTradeEvents } = useReplayChartData(activeAccountId);
-  useReplayPlayback(activeAccountId ?? "");
+  const { replayCandles, replayTradeEvents } = useReplayChartData(activeAccountId, timeframe);
+  useReplayPlayback(activeAccountId ?? "", timeframeToMs(timeframe));
 
   const { data: positions = [] } = usePositions(activeAccountId);
   const { data: orders = [] } = useOrders(activeAccountId);

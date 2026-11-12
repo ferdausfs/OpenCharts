@@ -22,7 +22,7 @@ export function Chart() {
     <ChartPanel
       candles={t.replayCandles ?? t.candles ?? []}
       selectedSymbol={t.selectedSymbol}
-      timeframe={t.replayCandles ? "1m" : t.timeframe}
+      timeframe={t.timeframe}
       isDark={t.isDark}
       activeIndicators={t.activeIndicators}
       drawingTool={t.drawingTool}

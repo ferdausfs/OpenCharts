@@ -69,14 +69,16 @@ function finishReplay(accountId: string, sessionDate: string | null, endMs: numb
 /**
  * Drives the client-side replay clock using requestAnimationFrame.
  *
- * - Advances replayCursorTimestamp at replaySpeed × real time.
+ * - Advances replayCursorTimestamp at replaySpeed chart-bars per real second,
+ *   regardless of the charted timeframe (TradingView-style bar replay): 1x
+ *   reveals one new candle every second, 2x two candles, and so on.
  * - Throttles Zustand writes to STORE_SYNC_MS to avoid per-frame re-renders.
  * - Debounces server PATCH to SERVER_SYNC_MS for cursor persistence.
  * - Advances up to MAX_TICKS_PER_FRAME tick indices per frame (chunked).
  * - Detects external seeks by comparing store cursor to local cursor ref.
  * - Auto-stops and emits "stopped" when the cursor reaches the end of the buffer.
  */
-export function useReplayPlayback(accountId: string) {
+export function useReplayPlayback(accountId: string, replayBarMs: number) {
   const isReplaying = useTradingStore((s) => s.isReplaying);
   const replayPaused = useTradingStore((s) => s.replayPaused);
   const replaySpeed = useTradingStore((s) => s.replaySpeed);
@@ -109,6 +111,10 @@ export function useReplayPlayback(accountId: string) {
   useEffect(() => {
     sessionDateRef.current = replaySessionDate;
   }, [replaySessionDate]);
+  const barMsRef = useRef(replayBarMs);
+  useEffect(() => {
+    barMsRef.current = replayBarMs;
+  }, [replayBarMs]);
 
   // Reset playback position whenever a replay session (re)starts. Without this
   // the local cursor/index refs survive a stop, so replaying the same day
@@ -168,7 +174,9 @@ export function useReplayPlayback(accountId: string) {
       // Cap real delta to 100ms to handle tab-switch gaps gracefully
       const realDeltaMs = Math.min(now - lastFrameTimeRef.current, 100);
       lastFrameTimeRef.current = now;
-      const replayDeltaMs = realDeltaMs * speedRef.current;
+      // replaySpeed chart bars per real second: one bar of replayBarMs market
+      // time per (1000 / speed) ms of real time.
+      const replayDeltaMs = realDeltaMs * speedRef.current * (barMsRef.current / 1000);
 
       const buf = tickBufferRef.current;
       if (buf.length === 0) return true; // session data still loading

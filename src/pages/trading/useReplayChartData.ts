@@ -10,17 +10,53 @@ type ReplayTradeEvents = ReplaySessionData["tradeEvents"];
 type TickBar = ReplaySessionData["tickBuffer"][number];
 
 /** A replay buffer bar spans one minute. */
-const BAR_MS = 60_000;
+const ONE_MINUTE_MS = 60_000;
 
-/** All 1m bars at or before the playback cursor, as chart candles.
+/** Map an OpenCharts timeframe string ("15m", "1h", "4h", "1d", "1w") to ms. */
+export function timeframeToMs(timeframe: string): number {
+  const match = /^(\d+)([smhdw])$/.exec(timeframe);
+  if (!match) return ONE_MINUTE_MS;
+  const n = Number(match[1]);
+  const unitMs = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[
+    match[2] as "s" | "m" | "h" | "d" | "w"
+  ];
+  return Math.max(ONE_MINUTE_MS, n * (unitMs ?? ONE_MINUTE_MS));
+}
+
+/**
+ * Aggregate the 1m replay buffer into the chart's timeframe, so replaying on a
+ * 15m chart steps through 15m candles (TradingView-style bar replay). Buckets
+ * are anchored to the buffer's first bar so every timeframe aligns cleanly.
+ */
+function aggregateToTimeframe(buf: TickBar[], barMs: number): TickBar[] {
+  if (barMs <= ONE_MINUTE_MS) return buf;
+  const anchor = buf[0]?.t ?? 0;
+  const out: TickBar[] = [];
+  let cur: TickBar | null = null;
+  for (const b of buf) {
+    const bucketStart = anchor + Math.floor((b.t - anchor) / barMs) * barMs;
+    if (cur === null || cur.t !== bucketStart) {
+      cur = { t: bucketStart, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v };
+      out.push(cur);
+    } else {
+      if (b.h > cur.h) cur.h = b.h;
+      if (b.l < cur.l) cur.l = b.l;
+      cur.c = b.c;
+      cur.v += b.v;
+    }
+  }
+  return out;
+}
+
+/** All bars at or before the playback cursor, as chart candles.
  *
  * While the cursor sits inside a bar, that bar is presented as a forming
  * candle whose close has walked proportionally from its open toward its close
  * (high/low stay final — the buffer has no intra-bar path). Without this the
- * chart would sit still for up to a minute per bar at 1x, which reads as
+ * chart would sit still between bar boundaries, which reads as
  * "replay is not playing".
  */
-function sliceBufferToCursor(buf: TickBar[], cursorMs: number | null): Candle[] {
+function sliceBufferToCursor(buf: TickBar[], cursorMs: number | null, barMs: number): Candle[] {
   const cutoff = cursorMs ?? buf[0]?.t ?? 0;
   const out: Candle[] = [];
   let lastBarMs: number | null = null;
@@ -31,7 +67,7 @@ function sliceBufferToCursor(buf: TickBar[], cursorMs: number | null): Candle[] 
   }
   const last = out[out.length - 1];
   if (cursorMs != null && last && lastBarMs != null) {
-    const progress = Math.min(1, Math.max(0, (cursorMs - lastBarMs) / BAR_MS));
+    const progress = Math.min(1, Math.max(0, (cursorMs - lastBarMs) / barMs));
     if (progress < 1) {
       out[out.length - 1] = {
         ...last,
@@ -60,7 +96,10 @@ function emptySessionReason(data: ReplaySessionData, sessionDate: string): strin
  * While `replayCandles` is non-null the caller must suppress the live feed
  * (tick / liveCandle props) so real-time data can't paint over the playback.
  */
-export function useReplayChartData(accountId: string | null): {
+export function useReplayChartData(
+  accountId: string | null,
+  timeframe: string,
+): {
   replayCandles: Candle[] | null;
   replayTradeEvents: ReplayTradeEvents | undefined;
 } {
@@ -92,11 +131,14 @@ export function useReplayChartData(accountId: string | null): {
     useTradingStore.getState().onReplayStateChanged("stopped");
   }, [isReplaying, data, replaySessionDate, accountId]);
 
-  // Progressive reveal: all 1m bars at or before the playback cursor.
+  // Progressive reveal: all bars at or before the playback cursor, aggregated
+  // into the chart's timeframe so replay steps one chart candle at a time.
   const replayCandles = useMemo<Candle[] | null>(() => {
     if (!isReplaying || !data || data.tickBuffer.length === 0) return null;
-    return sliceBufferToCursor(data.tickBuffer, replayCursorTimestamp);
-  }, [isReplaying, data, replayCursorTimestamp]);
+    const barMs = timeframeToMs(timeframe);
+    const aggregated = aggregateToTimeframe(data.tickBuffer, barMs);
+    return sliceBufferToCursor(aggregated, replayCursorTimestamp, barMs);
+  }, [isReplaying, data, replayCursorTimestamp, timeframe]);
 
   return {
     replayCandles,

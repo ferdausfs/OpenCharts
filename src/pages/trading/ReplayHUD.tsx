@@ -5,7 +5,7 @@ import { useTradingStore } from "../../services/store.tsx";
 import { api } from "../../services/api.ts";
 import { safeSession } from "../../lib/safe-storage.ts";
 
-const SPEED_OPTIONS = [0.5, 1, 2, 5, 10] as const;
+const SPEED_OPTIONS = [0.5, 1, 2, 3, 5, 10] as const;
 type Speed = (typeof SPEED_OPTIONS)[number];
 
 function formatReplayTime(epochMs: number): string {
