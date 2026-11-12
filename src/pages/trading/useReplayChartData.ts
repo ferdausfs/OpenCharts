@@ -1,9 +1,9 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../services/api.ts";
 import { useReplaySession } from "../../services/queries.ts";
 import type { Candle } from "../../services/schemas.ts";
 import { useTradingStore } from "../../services/store.tsx";
-import { toast } from "../../services/toast.ts";
+import { toLocalDateString } from "../../lib/utils.ts";
 
 type ReplaySessionData = NonNullable<Awaited<ReturnType<typeof api.replayGetSession>>>;
 type ReplayTradeEvents = ReplaySessionData["tradeEvents"];
@@ -11,6 +11,11 @@ type TickBar = ReplaySessionData["tickBuffer"][number];
 
 /** A replay buffer bar spans one minute. */
 const ONE_MINUTE_MS = 60_000;
+
+/** Local-midnight epoch ms of a YYYY-MM-DD date (mirrors replay.ts dayBounds). */
+function dayStartMs(dateStr: string): number {
+  return new Date(`${dateStr}T00:00:00`).getTime();
+}
 
 /** Map an OpenCharts timeframe string ("15m", "1h", "4h", "1d", "1w") to ms. */
 export function timeframeToMs(timeframe: string): number {
@@ -78,20 +83,14 @@ function sliceBufferToCursor(buf: TickBar[], cursorMs: number | null, barMs: num
   return out;
 }
 
-function emptySessionReason(data: ReplaySessionData, sessionDate: string): string {
-  return data.meta?.primarySymbol
-    ? `No 1m candle history stored for ${data.meta.primarySymbol} on ${sessionDate}`
-    : `No trading activity found on ${sessionDate}`;
-}
-
 /**
  * Bridges a replay session into chart-ready data.
  *
  * - Focuses the chart on the session's primary symbol when replay starts.
  * - Slices the 1m tick buffer up to the playback cursor, so the chart reveals
  *   bars progressively as `useReplayPlayback` advances the cursor.
- * - Detects empty sessions (no trades / no stored candles for that day) and
- *   stops the replay with an explanatory toast instead of silently idling.
+ * - Chains days: bars of days already played are accumulated as raw 1m bars,
+ *   so a multi-day replay reads as one continuous series.
  *
  * While `replayCandles` is non-null the caller must suppress the live feed
  * (tick / liveCandle props) so real-time data can't paint over the playback.
@@ -121,24 +120,67 @@ export function useReplayChartData(
     if (replaySymbol) setSelectedSymbol(replaySymbol);
   }, [replaySymbol, setSelectedSymbol]);
 
-  // Empty session — no positions that day, or no 1m history stored. Stop and
-  // tell the trader why; the old behavior was an idle loop with a frozen HUD.
-  useEffect(() => {
-    if (!isReplaying || !data || !replaySessionDate || !accountId) return;
-    if (data.tickBuffer.length > 0) return;
-    toast.warning("Replay unavailable", emptySessionReason(data, replaySessionDate));
-    api.replayStop(accountId, replaySessionDate).catch(() => null);
-    useTradingStore.getState().onReplayStateChanged("stopped");
-  }, [isReplaying, data, replaySessionDate, accountId]);
+  // ── Multi-day accumulation ───────────────────────────────
+  // Replay chains day after day (useReplayPlayback advances the session date
+  // at each day's end). Raw 1m bars of days already played are folded in
+  // here, so the chart builds one continuous series across days instead of
+  // restarting at every seam — which also keeps cross-day timeframe buckets
+  // (1w especially) aligned to a single anchor.
+  const [accumulated, setAccumulated] = useState<TickBar[]>([]);
+  const accDateRef = useRef<string | null>(null);
+  const prevDayBufRef = useRef<{ date: string; buf: TickBar[] } | null>(null);
 
-  // Progressive reveal: all bars at or before the playback cursor, aggregated
+  // Remember the loaded session day's buffer, labelled by its own first-bar
+  // date — during the day-advance fetch `data` still holds the old day.
+  useLayoutEffect(() => {
+    const buf = data?.tickBuffer;
+    if (!buf || buf.length === 0) return;
+    prevDayBufRef.current = { date: toLocalDateString(new Date(buf[0]!.t)), buf };
+  }, [data]);
+
+  // When the session advances to the next day, fold the consumed day's raw
+  // bars into the accumulation; a brand-new session (re)starts from zero.
+  useLayoutEffect(() => {
+    if (!isReplaying || !replaySessionDate) {
+      if (accDateRef.current !== null) {
+        accDateRef.current = null;
+        prevDayBufRef.current = null;
+        setAccumulated([]);
+      }
+      return;
+    }
+    if (accDateRef.current === null) {
+      accDateRef.current = replaySessionDate;
+      return;
+    }
+    if (accDateRef.current === replaySessionDate) return;
+    const prev = prevDayBufRef.current;
+    if (prev && prev.date === accDateRef.current && prev.buf.length > 0) {
+      // Keep bars strictly before the new day's start: the dayBounds windows
+      // of consecutive days can overlap around DST transitions, and duplicate
+      // timestamps would corrupt the aggregated series.
+      const seam = dayStartMs(replaySessionDate);
+      setAccumulated((acc) => acc.concat(prev.buf.filter((b) => b.t < seam)));
+    }
+    accDateRef.current = replaySessionDate;
+  }, [isReplaying, replaySessionDate]);
+
+  // Progressive reveal: accumulated raw bars (days already played) plus the
+  // current session day's buffer, sliced at the playback cursor and aggregated
   // into the chart's timeframe so replay steps one chart candle at a time.
+  // While the next day loads, `data` is undefined (or still the previous
+  // day's buffer) — only bars belonging to the current session date are taken
+  // from it, so the already-played days keep the chart filled at the seam.
   const replayCandles = useMemo<Candle[] | null>(() => {
-    if (!isReplaying || !data || data.tickBuffer.length === 0) return null;
+    if (!isReplaying) return null;
     const barMs = timeframeToMs(timeframe);
-    const aggregated = aggregateToTimeframe(data.tickBuffer, barMs);
+    const dayStart = replaySessionDate ? dayStartMs(replaySessionDate) : 0;
+    const currentDayBars = (data?.tickBuffer ?? []).filter((b) => b.t >= dayStart);
+    const raw = accumulated.concat(currentDayBars);
+    if (raw.length === 0) return null;
+    const aggregated = aggregateToTimeframe(raw, barMs);
     return sliceBufferToCursor(aggregated, replayCursorTimestamp, barMs);
-  }, [isReplaying, data, replayCursorTimestamp, timeframe]);
+  }, [isReplaying, data, accumulated, replayCursorTimestamp, timeframe, replaySessionDate]);
 
   return {
     replayCandles,

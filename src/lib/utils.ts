@@ -60,3 +60,17 @@ export function toLocalDateString(date: Date = new Date()): string {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+/**
+ * The calendar day after a YYYY-MM-DD date, as YYYY-MM-DD.
+ *
+ * Date arithmetic, not `+24h` clock math — on DST transition days a 24-hour
+ * offset can land back on the same calendar date (25-hour day) or skip one
+ * (23-hour day). Multi-day replay chains on this being exact.
+ */
+export function nextLocalDateString(dateStr: string): string {
+  const parts = dateStr.split("-").map(Number);
+  const date = new Date(parts[0] ?? 1970, (parts[1] ?? 1) - 1, parts[2] ?? 1);
+  date.setDate(date.getDate() + 1);
+  return toLocalDateString(date);
+}
