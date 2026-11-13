@@ -8,13 +8,21 @@ import { safeSession } from "../../lib/safe-storage.ts";
 const SPEED_OPTIONS = [0.5, 1, 2, 3, 5, 10] as const;
 type Speed = (typeof SPEED_OPTIONS)[number];
 
-function formatReplayTime(epochMs: number): string {
-  return new Date(epochMs).toLocaleTimeString("en-US", {
+/**
+ * Replay clock readout. The calendar day is included whenever the replayed
+ * moment is not today — with multi-day chaining, a time-only readout would
+ * show 00:00:00 at every day seam and read as "the same day replaying".
+ */
+function formatReplayStamp(epochMs: number): string {
+  const d = new Date(epochMs);
+  const time = d.toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
   });
+  if (toLocalDateString(d) === toLocalDateString()) return time;
+  return `${d.toLocaleDateString("en-US", { day: "2-digit", month: "short" })} · ${time}`;
 }
 
 export function ReplayHUD({ accountId }: { accountId: string }) {
@@ -70,7 +78,7 @@ export function ReplayHUD({ accountId }: { accountId: string }) {
       ) : (
         replayCursorTimestamp != null && (
           <span className="text-[11px] font-mono text-orange-400 tabular-nums">
-            {formatReplayTime(replayCursorTimestamp)}
+            {formatReplayStamp(replayCursorTimestamp)}
           </span>
         )
       )}
